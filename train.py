@@ -61,18 +61,35 @@ def train(opt):
     if opt.start_from:
         opt.pretrain = False
         infos_path = os.path.join(save_folder, 'info.json')
-        with open(infos_path) as f:
-            logger.info('Load info from {}'.format(infos_path))
-            saved_info = json.load(f)
-            prev_opt = saved_info[opt.start_from_mode[:4]]['opt']
+        if os.path.exists(infos_path):
+            with open(infos_path) as f:
+                logger.info('Load info from {}'.format(infos_path))
+                saved_info = json.load(f)
+                prev_opt = saved_info[opt.start_from_mode[:4]]['opt']
 
-            exclude_opt = ['start_from', 'start_from_mode', 'pretrain']
-            for opt_name in prev_opt.keys():
-                if opt_name not in exclude_opt:
-                    vars(opt).update({opt_name: prev_opt.get(opt_name)})
-                if prev_opt.get(opt_name) != vars(opt).get(opt_name):
-                    logger.info('Change opt {} : {} --> {}'.format(opt_name, prev_opt.get(opt_name),
-                                                                   vars(opt).get(opt_name)))
+                exclude_opt = ['start_from', 'start_from_mode', 'pretrain']
+                for opt_name in prev_opt.keys():
+                    if opt_name not in exclude_opt:
+                        vars(opt).update({opt_name: prev_opt.get(opt_name)})
+                    if prev_opt.get(opt_name) != vars(opt).get(opt_name):
+                        logger.info('Change opt {} : {} --> {}'.format(opt_name, prev_opt.get(opt_name),
+                                                                       vars(opt).get(opt_name)))
+        else:
+            # Older runs may have a checkpoint written just before validation failed,
+            # before the first info.json could be produced.
+            checkpoint_name = 'model-best.pth' if opt.start_from_mode == 'best' else 'model-last.pth'
+            checkpoint_path = os.path.join(save_folder, checkpoint_name)
+            if not os.path.exists(checkpoint_path):
+                raise FileNotFoundError(f'Cannot resume: missing both {infos_path} and {checkpoint_path}')
+            recovery_checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+            recovery_key = opt.start_from_mode[:4]
+            saved_info[recovery_key] = {
+                'opt': vars(opt).copy(),
+                'iter': int(recovery_checkpoint.get('iteration', 0)),
+                'epoch': int(recovery_checkpoint.get('epoch', 0)),
+                'best_val_score': -1e5,
+            }
+            logger.warning('Missing info.json; reconstructed resume metadata from %s', checkpoint_name)
 
     train_dataset = PropSeqDataset(opt.train_caption_file,
                                    opt.visual_feature_folder,
