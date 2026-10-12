@@ -247,7 +247,11 @@ class HungarianMatcher_cl(nn.Module):
                 cost_cl = -1 * outputs['cl_match_mats']
 
             # Final cost matrix
-            C = self.cost_bbox * cost_bbox + self.cost_class * cost_class + self.cost_giou * cost_giou + self.cost_cl * cost_cl +self.cost_caption * cost_caption
+            C = self.cost_bbox * cost_bbox + self.cost_class * cost_class + self.cost_giou * cost_giou + self.cost_cl * cost_cl + self.cost_caption * cost_caption
+            semantic_cost = outputs.get('semantic_caption_cost')
+            if (getattr(self.opt, 'semantic_caption_matching', False) and
+                    isinstance(semantic_cost, torch.Tensor)):
+                C = C + float(getattr(self.opt, 'semantic_match_weight', 1.0)) * semantic_cost
             if self.opt is not None and self.opt.set_cost_caption > 0 and 'cap_cost_mat' in outputs:
                 C = C + self.opt.set_cost_caption * outputs['cap_cost_mat']
             costs = {'cost_bbox': cost_bbox,

@@ -152,9 +152,17 @@ def parse_opts():
     parser.add_argument('--boundary_nll_loss_coef', default=0.0, type=float,
                         help='Weight for Gaussian NLL on predicted temporal start/end uncertainty.')
     parser.add_argument('--enable_semantic_interaction', action='store_true', default=False,
-                        help='Enable bidirectional semantic-guided interaction and visual re-attendance in decoder.')
+                        help='Enable bidirectional gated query interaction and visual re-attendance in decoder.')
     parser.add_argument('--enable_narrative_context', action='store_true', default=False,
                         help='Enable sequential narrative memory across event caption queries.')
+    parser.add_argument('--semantic_caption_matching', action='store_true', default=False,
+                        help='Use projected CLIP text similarity for Hungarian caption matching (skips GPT-2 matching forwards).')
+    parser.add_argument('--semantic_match_weight', default=1.0, type=float,
+                        help='Weight of the semantic caption cost in Hungarian matching.')
+    parser.add_argument('--semantic_match_warmup_epochs', default=3, type=int,
+                        help='Linearly ramp semantic Hungarian cost to its target weight.')
+    parser.add_argument('--semantic_caption_loss_coef', default=0.2, type=float,
+                        help='Weight of the matched query-to-CLIP-text alignment loss.')
     parser.add_argument('--loss_caption_cl', default=0, type=float)
     parser.add_argument('--eos_coef', default=0.1, type=float,
                         help="Relative classification weight of the no-object class")

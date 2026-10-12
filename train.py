@@ -168,6 +168,7 @@ def train(opt):
             criterion.matcher.cost_cl = 0 if cl_weight == 0 else opt.set_cost_cl
 
     caption_match_base_cost = criterion.matcher.cost_caption
+    semantic_match_base_weight = float(getattr(opt, 'semantic_match_weight', 1.0))
 
 
 
@@ -192,6 +193,13 @@ def train(opt):
             criterion.matcher.cost_caption = caption_match_base_cost * warmup_scale
         else:
             criterion.matcher.cost_caption = caption_match_base_cost
+        semantic_warmup = int(getattr(opt, 'semantic_match_warmup_epochs', 0))
+        if getattr(opt, 'semantic_caption_matching', False) and semantic_warmup > 0:
+            opt.semantic_match_weight = semantic_match_base_weight * min(
+                1.0, max(0.0, float(epoch + 1) / semantic_warmup)
+            )
+        else:
+            opt.semantic_match_weight = semantic_match_base_weight
         # scheduled sampling rate update
         if epoch > opt.scheduled_sampling_start >= 0:
             frac = (epoch - opt.scheduled_sampling_start) // opt.scheduled_sampling_increase_every

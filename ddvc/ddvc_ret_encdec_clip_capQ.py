@@ -185,6 +185,10 @@ class CM2(nn.Module):
         hidden_dim = transformer.d_model
         self.query_embed = nn.Embedding(num_queries, hidden_dim * 2)
         self.loc_proj_cap=TwoLayerMLP(hidden_dim* 2,hidden_dim* 2)
+        self.semantic_caption_proj = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim), nn.GELU(), nn.Linear(hidden_dim, 768)
+        ) if getattr(opt, 'semantic_caption_matching', False) else None
+        self._semantic_gt_lookup = None
         # self.query_embed_cap = nn.Embedding(num_queries, hidden_dim * 2)
 
 
@@ -708,7 +712,7 @@ class CM2(nn.Module):
                                             mask_flatten, proposals_mask)
 
                     # 2. Semantic-Guided Visual Re-Attendance (Cách B: Dùng Q_cap hướng dẫn Q_loc rà soát lại video)
-                    cur_tgt = self.semantic_interaction_layers[lid](
+                    cur_tgt, cur_tgt_cap = self.semantic_interaction_layers[lid](
                         cur_tgt, cur_tgt_cap, ref_input, memory, temporal_shapes, level_start_index, mask_flatten
                     )
 
@@ -773,7 +777,9 @@ class CM2(nn.Module):
                     'proposals_mask': proposals_mask,
                     'text_embed':text_embed,
                     'event_embed':retrieved_embed}
-            if eval_mode or self.opt.caption_loss_coef == 0:
+            if self.semantic_caption_proj is not None:
+                others['semantic_gt_embeddings'] = self._get_semantic_gt_embeddings(dt, clip_gt)
+            if eval_mode or (self.opt.caption_loss_coef == 0 and self.semantic_caption_proj is None):
                 out, loss = self.parallel_prediction_full(dt, criterion, contrastive_criterion, hs,hs_cap, query_embed,
                                                         init_reference, inter_references, others,
                                                         disable_iterative_refine, self.opt.eval_disable_captioning)
@@ -790,6 +796,72 @@ class CM2(nn.Module):
         hs_lid_pool = torch.max(hs_lid, dim=1, keepdim=False)[0]  # [bs, feat_dim]
         outputs_class0 = counter(hs_lid_pool)
         return outputs_class0
+
+    @staticmethod
+    def _normalize_caption_key(text):
+        return ' '.join(str(text).strip().lower().split())
+
+    def _get_semantic_gt_embeddings(self, dt, clip_gt):
+        """Fetch frozen CLIP sentence embeddings aligned with the flattened GT captions."""
+        if self._semantic_gt_lookup is None:
+            normalized = {}
+            for key, value in clip_gt.items():
+                normalized.setdefault(self._normalize_caption_key(key), value)
+            self._semantic_gt_lookup = normalized
+        normalized = self._semantic_gt_lookup
+        embeddings, missing = [], []
+        for video_captions in dt['cap_raw']:
+            for caption in video_captions:
+                value = clip_gt.get(str(caption).strip())
+                if value is None:
+                    value = normalized.get(self._normalize_caption_key(caption))
+                if value is None:
+                    missing.append(str(caption))
+                else:
+                    embeddings.append(torch.as_tensor(value, device=dt['video_tensor'].device).float().reshape(-1))
+        if missing:
+            raise KeyError(
+                'Semantic caption matching could not find CLIP embeddings for '
+                f'{len(missing)} training captions. Example: {missing[:3]}. '
+                'Build the CLIP memory bank from the same training annotations.'
+            )
+        if not embeddings:
+            return dt['video_tensor'].new_empty((0, 768))
+        result = torch.stack(embeddings)
+        if result.shape[-1] != 768:
+            raise ValueError(f'Expected pooled 768-D CLIP text embeddings, got {tuple(result.shape)}')
+        return F.normalize(result, dim=-1)
+
+    def _semantic_caption_cost(self, caption_queries, semantic_gt_embeddings, dt):
+        projected = F.normalize(self.semantic_caption_proj(caption_queries).float(), dim=-1)
+        costs = projected.new_zeros((projected.shape[0], projected.shape[1], semantic_gt_embeddings.shape[0]))
+        offset = 0
+        for batch_idx, captions in enumerate(dt['cap_raw']):
+            count = len(captions)
+            if count:
+                costs[batch_idx, :, offset:offset + count] = 1.0 - torch.matmul(
+                    projected[batch_idx], semantic_gt_embeddings[offset:offset + count].T
+                )
+            offset += count
+        return costs
+
+    def _semantic_caption_loss(self, caption_queries, indices, semantic_gt_embeddings, dt):
+        matched_losses, offset = [], 0
+        for batch_idx, captions in enumerate(dt['cap_raw']):
+            count = len(captions)
+            query_ids, target_ids = indices[batch_idx]
+            if len(query_ids):
+                query_ids = query_ids.to(caption_queries.device)
+                target_ids = target_ids.to(caption_queries.device) + offset
+                predicted = F.normalize(
+                    self.semantic_caption_proj(caption_queries[batch_idx, query_ids]).float(), dim=-1
+                )
+                target = semantic_gt_embeddings[target_ids]
+                matched_losses.append(1.0 - (predicted * target).sum(dim=-1))
+            offset += count
+        if matched_losses:
+            return torch.cat(matched_losses).mean()
+        return caption_queries.sum() * 0.0
 
     def _caption_encoder_mask(self, pred_boxes, boundary_logvar, query_ids, frame_count):
         """Build an uncertainty-adaptive temporal context mask for GPT-2 cross-attention."""
@@ -927,6 +999,7 @@ class CM2(nn.Module):
         outputs_classes0 = []
         outputs_coords = []
         outputs_boundary_logvars = []
+        outputs_semantic_costs = []
         outputs_cap_losses = []
         outputs_cap_probs = []
         outputs_cap_seqs = []
@@ -1045,10 +1118,22 @@ class CM2(nn.Module):
 
             query_idxs=torch.arange(0, query_len).repeat_interleave(timestamp_len)
             seq_idxs = torch.arange(0, timestamp_len).repeat(query_len) # 包括 0 到 n 的整数
-            with torch.no_grad():
-                cost_caption, loss_caption, cap_probs, seq = self.caption_prediction_no_grad(self.caption_head[l_id], dt, hs_lid_cap,
-                                                                                    reference, others, self.opt.caption_decoder_type,[(query_idxs,seq_idxs)],
-                                                                                    outputs_coord, boundary_logvar)
+            if self.semantic_caption_proj is not None:
+                with torch.no_grad():
+                    semantic_cost = self._semantic_caption_cost(
+                        hs_lid_cap, others['semantic_gt_embeddings'], dt
+                    )
+                outputs_semantic_costs.append(semantic_cost)
+                loss_caption = torch.zeros_like(semantic_cost)
+                cap_probs = {'cap_prob_train': torch.zeros(1, device=hs.device)}
+                seq = torch.zeros(hs.shape[1], hs.shape[2], 3, device=hs.device)
+            else:
+                with torch.no_grad():
+                    cost_caption, loss_caption, cap_probs, seq = self.caption_prediction_no_grad(
+                        self.caption_head[l_id], dt, hs_lid_cap, reference, others,
+                        self.opt.caption_decoder_type, [(query_idxs, seq_idxs)], outputs_coord, boundary_logvar
+                    )
+                outputs_semantic_costs.append(torch.zeros_like(loss_caption))
             # cost_caption, loss_caption, cap_probs, seq = self.caption_prediction(self.caption_head[l_id], dt, hs_lid_cap,
             #                                                                      reference, others, "none")
 
@@ -1077,6 +1162,7 @@ class CM2(nn.Module):
             'pred_boxes': outputs_coord,
             'pred_boundary_logvar': outputs_boundary_logvar,
             'caption_losses': outputs_cap_loss,
+            'semantic_caption_cost': torch.stack(outputs_semantic_costs),
             'caption_probs': outputs_cap_probs,
             'seq': outputs_cap_seqs,
             'cl_match_mats': cl_match_mats}
@@ -1096,6 +1182,10 @@ class CM2(nn.Module):
                                                                    outputs_coord[l_id], outputs_boundary_logvar[l_id])
                 # cap_loss=out["caption_losses"][indices[0]].mean()
                 l_dict = {'loss_caption': cap_loss,"loss_caption_cl":cap_cl_loss}
+                if self.semantic_caption_proj is not None:
+                    l_dict['loss_semantic_caption'] = self._semantic_caption_loss(
+                        hs_lid_cap, indices, others['semantic_gt_embeddings'], dt
+                    )
                 
                 if l_id != hs.shape[0] - 1:
                     l_dict = {k + f'_{l_id}': v for k, v in l_dict.items()}
@@ -1115,6 +1205,10 @@ class CM2(nn.Module):
                                                                others, self.opt.caption_decoder_type, indices,
                                                                outputs_coord[l_id], outputs_boundary_logvar[l_id])
             l_dict = {'loss_caption': cap_loss}
+            if self.semantic_caption_proj is not None:
+                l_dict['loss_semantic_caption'] = self._semantic_caption_loss(
+                    hs_lid_cap, indices, others['semantic_gt_embeddings'], dt
+                )
             
             loss.update(l_dict)
 
@@ -1680,6 +1774,8 @@ def build(args):
                    'loss_boundary_nll': args.boundary_nll_loss_coef,
                    'loss_counter': args.count_loss_coef,
                    'loss_caption': args.caption_loss_coef,
+                   'loss_semantic_caption': (getattr(args, 'semantic_caption_loss_coef', 0.2)
+                                             if getattr(args, 'semantic_caption_matching', False) else 0.0),
                    'loss_caption_cl':args.loss_caption_cl,
                    'contrastive_loss': args.contrastive_loss_coef,
                    'loss_contrastive': args.contrastive_loss_coef,
