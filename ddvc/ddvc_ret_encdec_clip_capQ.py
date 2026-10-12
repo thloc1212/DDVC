@@ -777,7 +777,7 @@ class CM2(nn.Module):
                     'proposals_mask': proposals_mask,
                     'text_embed':text_embed,
                     'event_embed':retrieved_embed}
-            if self.semantic_caption_proj is not None:
+            if self.semantic_caption_proj is not None and not eval_mode:
                 others['semantic_gt_embeddings'] = self._get_semantic_gt_embeddings(dt, clip_gt)
             if eval_mode or (self.opt.caption_loss_coef == 0 and self.semantic_caption_proj is None):
                 out, loss = self.parallel_prediction_full(dt, criterion, contrastive_criterion, hs,hs_cap, query_embed,
