@@ -302,6 +302,18 @@ def train(opt):
 
             torch.save(saved_pth, checkpoint_path)
 
+            # Keep a resumable state even if validation is interrupted or fails.
+            saved_info['last'] = {'opt': vars(opt),
+                                  'iter': iteration,
+                                  'epoch': epoch,
+                                  'best_val_score': float(best_val_score)}
+            saved_info['history'] = {'val_result_history': val_result_history,
+                                     'loss_history': loss_history,
+                                     'lr_history': lr_history}
+            with open(os.path.join(save_folder, 'info.json'), 'w') as f:
+                json.dump(saved_info, f)
+            logger.info('Saved recovery metadata before validation.')
+
             model.eval()
             result_json_path = os.path.join(save_folder, 'prediction',
                                          'num{}_epoch{}.json'.format(
