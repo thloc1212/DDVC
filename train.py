@@ -89,6 +89,8 @@ def train(opt):
                 'epoch': int(recovery_checkpoint.get('epoch', 0)),
                 'best_val_score': -1e5,
             }
+            with open(infos_path, 'w') as f:
+                json.dump(saved_info, f)
             logger.warning('Missing info.json; reconstructed resume metadata from %s', checkpoint_name)
 
     train_dataset = PropSeqDataset(opt.train_caption_file,
