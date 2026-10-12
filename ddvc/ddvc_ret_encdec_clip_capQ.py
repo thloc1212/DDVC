@@ -1082,6 +1082,7 @@ class CM2(nn.Module):
         outputs_coords = []
         outputs_boundary_logvars = []
         outputs_cap_costs = []
+        outputs_semantic_costs = []
         outputs_cap_losses = []
         outputs_cap_probs = []
         outputs_cap_seqs = []
