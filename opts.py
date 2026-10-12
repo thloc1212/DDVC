@@ -145,6 +145,16 @@ def parse_opts():
     parser.add_argument('--giou_loss_coef', default=2, type=float)
     parser.add_argument('--count_loss_coef', default=0, type=float)
     parser.add_argument('--caption_loss_coef', default=0, type=float)
+    parser.add_argument('--caption_match_warmup_epochs', default=0, type=int,
+                        help='Linearly warm up the caption cost used by Hungarian matching.')
+    parser.add_argument('--caption_match_chunk_size', default=16, type=int,
+                        help='Query-caption pairs per GPT-2 matching forward to cap peak VRAM.')
+    parser.add_argument('--boundary_nll_loss_coef', default=0.0, type=float,
+                        help='Weight for Gaussian NLL on predicted temporal start/end uncertainty.')
+    parser.add_argument('--enable_semantic_interaction', action='store_true', default=False,
+                        help='Enable bidirectional semantic-guided interaction and visual re-attendance in decoder.')
+    parser.add_argument('--enable_narrative_context', action='store_true', default=False,
+                        help='Enable sequential narrative memory across event caption queries.')
     parser.add_argument('--loss_caption_cl', default=0, type=float)
     parser.add_argument('--eos_coef', default=0.1, type=float,
                         help="Relative classification weight of the no-object class")

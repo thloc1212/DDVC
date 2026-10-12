@@ -367,6 +367,12 @@ class SetCriterion_cl(nn.Module):
             box_ops.box_cl_to_xy(src_boxes),
             box_ops.box_cl_to_xy(target_boxes)))
         losses['loss_giou'] = loss_giou.sum() / num_boxes
+        if 'pred_boundary_logvar' in outputs:
+            src_logvar = outputs['pred_boundary_logvar'][idx].clamp(min=-8.0, max=1.0)
+            src_xy = box_ops.box_cl_to_xy(src_boxes)
+            target_xy = box_ops.box_cl_to_xy(target_boxes)
+            boundary_nll = 0.5 * (src_logvar.exp().reciprocal() * (src_xy - target_xy).pow(2) + src_logvar)
+            losses['loss_boundary_nll'] = boundary_nll.sum() / num_boxes
         self_iou = torch.triu(box_ops.box_iou(box_ops.box_cl_to_xy(src_boxes),
                                               box_ops.box_cl_to_xy(src_boxes))[0], diagonal=1)
         sizes = [len(v[0]) for v in indices]

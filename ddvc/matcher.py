@@ -221,6 +221,11 @@ class HungarianMatcher_cl(nn.Module):
             tgt_bbox = torch.cat([v["boxes"] for v in targets])
 
             cost_caption = outputs["caption_losses"] if "caption_losses" in outputs else 0
+            if (getattr(self.opt, 'boundary_nll_loss_coef', 0.0) > 0 and
+                    isinstance(cost_caption, torch.Tensor) and 'pred_boundary_logvar' in outputs):
+                boundary_std = outputs['pred_boundary_logvar'].clamp(min=-8.0, max=1.0).mul(0.5).exp()
+                caption_reliability = torch.exp(-4.0 * boundary_std.mean(-1)).clamp(min=0.1, max=1.0)
+                cost_caption = cost_caption * caption_reliability.unsqueeze(-1)
             # Compute the classification cost.
             # alpha = 0.25
             alpha = self.cost_alpha

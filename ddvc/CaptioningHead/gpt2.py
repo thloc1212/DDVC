@@ -44,22 +44,26 @@ class GPT2CaptionModel(nn.Module):
         return prefix_emb
 
 
-    def forward(self, hs, cap_label, cap_mask ,others, cap_tensor, clip_fram_feature,get_loss=True):
+    def forward(self, hs, cap_label, cap_mask ,others, cap_tensor, clip_fram_feature,get_loss=True,
+                encoder_attention_mask=None):
         prefix_emb = self.relu(self.fc1(hs))
         prefix_emb = self.fc2(prefix_emb)
         input_emb=self.model.transformer.wte(cap_label)
         input_emb[:,:1,:]=prefix_emb
         if self.opt.add_cross_attention==False:
-            output=self.model(inputs_embeds=input_emb,attention_mask=cap_mask, labels=cap_label)
+            output=self.model(inputs_embeds=input_emb,attention_mask=cap_mask,
+                              labels=cap_label if get_loss else None)
         else:
             cross_emb=clip_fram_feature.repeat(hs.shape[0],1,1).detach()
             if get_loss:
-                output=self.model(inputs_embeds=input_emb,attention_mask=cap_mask,labels=cap_label, encoder_hidden_states=cross_emb)
+                output=self.model(inputs_embeds=input_emb,attention_mask=cap_mask,labels=cap_label,
+                                  encoder_hidden_states=cross_emb, encoder_attention_mask=encoder_attention_mask)
             else:
-              output=self.model(inputs_embeds=input_emb,attention_mask=cap_mask,encoder_hidden_states=cross_emb)
+              output=self.model(inputs_embeds=input_emb,attention_mask=cap_mask,
+                                encoder_hidden_states=cross_emb, encoder_attention_mask=encoder_attention_mask)
         return output
 
-    def generate(self,hs, reference, others, clip_fram_feature):
+    def generate(self,hs, reference, others, clip_fram_feature, encoder_attention_mask=None):
         with torch.no_grad():
             prefix_emb = self.relu(self.fc1(hs))
             prefix_emb = self.fc2(prefix_emb)
@@ -72,6 +76,6 @@ class GPT2CaptionModel(nn.Module):
                                                 max_length=self.opt.max_caption_len, do_sample=False, num_beams=self.opt.gpt_beam_size,  return_dict_in_generate=True,  output_scores=True)
             else:
                 cross_emb=clip_fram_feature.repeat(hs.shape[0],1,1).detach()
-                output = self.model.generate(inputs_embeds=input_emb,attention_mask=attention_mask,eos_token_id=self.tokenizer.encode(".")[0],pad_token_id=self.tokenizer.pad_token_id,encoder_hidden_states=cross_emb,
+                output = self.model.generate(inputs_embeds=input_emb,attention_mask=attention_mask,eos_token_id=self.tokenizer.encode(".")[0],pad_token_id=self.tokenizer.pad_token_id,encoder_hidden_states=cross_emb,encoder_attention_mask=encoder_attention_mask,
                                                 max_length=self.opt.max_caption_len, do_sample=False, num_beams=self.opt.gpt_beam_size,  return_dict_in_generate=True,  output_scores=True)
             return output

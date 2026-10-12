@@ -167,6 +167,8 @@ def train(opt):
             criterion.weight_dict[key] = cl_weight
             criterion.matcher.cost_cl = 0 if cl_weight == 0 else opt.set_cost_cl
 
+    caption_match_base_cost = criterion.matcher.cost_caption
+
 
 
     weight_dict = criterion.weight_dict
@@ -184,6 +186,12 @@ def train(opt):
     
     # Epoch-level iteration
     while True:
+        caption_match_warmup = int(getattr(opt, 'caption_match_warmup_epochs', 0))
+        if caption_match_warmup > 0:
+            warmup_scale = min(1.0, max(0.0, float(epoch + 1) / caption_match_warmup))
+            criterion.matcher.cost_caption = caption_match_base_cost * warmup_scale
+        else:
+            criterion.matcher.cost_caption = caption_match_base_cost
         # scheduled sampling rate update
         if epoch > opt.scheduled_sampling_start >= 0:
             frac = (epoch - opt.scheduled_sampling_start) // opt.scheduled_sampling_increase_every
