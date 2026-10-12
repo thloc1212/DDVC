@@ -130,3 +130,4 @@ class InterEventNarrativeMemory(nn.Module):
             outputs.append(original_order_q)
 
         return torch.cat(outputs, dim=0)
+
