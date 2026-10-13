@@ -168,6 +168,8 @@ class HungarianMatcher_cl(nn.Module):
                  cost_alpha = 0.25,
                  cost_gamma = 2,
                  cost_cl = 0,
+                 cost_center = 0.0,
+                 cost_duration = 0.0,
                  opt=None):
         """Creates the matcher
 
@@ -184,6 +186,8 @@ class HungarianMatcher_cl(nn.Module):
         self.cost_alpha = cost_alpha
         self.cost_gamma = cost_gamma
         self.cost_cl = cost_cl
+        self.cost_center = cost_center
+        self.cost_duration = cost_duration
         self.opt = opt
 
 
@@ -237,6 +241,11 @@ class HungarianMatcher_cl(nn.Module):
             # Compute the L1 cost between boxes
             cost_bbox = torch.cdist(out_bbox, tgt_bbox, p=1)
 
+            # Boxes are represented as normalized (center, duration). Keep these
+            # costs separate so experiments can emphasize either temporal aspect.
+            cost_center = torch.cdist(out_bbox[:, 0:1], tgt_bbox[:, 0:1], p=1)
+            cost_duration = torch.cdist(out_bbox[:, 1:2], tgt_bbox[:, 1:2], p=1)
+
             # Compute the giou cost betwen boxes
             cost_giou = -generalized_box_iou(box_cl_to_xy(out_bbox),
                                              box_cl_to_xy(tgt_bbox))
@@ -247,7 +256,10 @@ class HungarianMatcher_cl(nn.Module):
                 cost_cl = -1 * outputs['cl_match_mats']
 
             # Final cost matrix
-            C = self.cost_bbox * cost_bbox + self.cost_class * cost_class + self.cost_giou * cost_giou + self.cost_cl * cost_cl + self.cost_caption * cost_caption
+            C = (self.cost_bbox * cost_bbox + self.cost_class * cost_class +
+                 self.cost_giou * cost_giou + self.cost_cl * cost_cl +
+                 self.cost_caption * cost_caption + self.cost_center * cost_center +
+                 self.cost_duration * cost_duration)
             semantic_cost = outputs.get('semantic_caption_cost')
             if (getattr(self.opt, 'semantic_caption_matching', False) and
                     isinstance(semantic_cost, torch.Tensor)):
@@ -257,6 +269,8 @@ class HungarianMatcher_cl(nn.Module):
             costs = {'cost_bbox': cost_bbox,
                      'cost_class': cost_class,
                      'cost_giou': cost_giou,
+                     'cost_center': cost_center,
+                     'cost_duration': cost_duration,
                      # 'cost_caption': cost_caption,
                      'out_bbox': out_bbox[:, 0::2]}
 
@@ -265,6 +279,8 @@ class HungarianMatcher_cl(nn.Module):
                 print(self.cost_bbox, cost_bbox.var(dim=0), cost_bbox.max(dim=0)[0] - cost_bbox.min(dim=0)[0])
                 print(self.cost_class, cost_class.var(dim=0), cost_class.max(dim=0)[0] - cost_class.min(dim=0)[0])
                 print(self.cost_giou, cost_giou.var(dim=0), cost_giou.max(dim=0)[0] - cost_giou.min(dim=0)[0])
+                print(self.cost_center, cost_center.var(dim=0), cost_center.max(dim=0)[0] - cost_center.min(dim=0)[0])
+                print(self.cost_duration, cost_duration.var(dim=0), cost_duration.max(dim=0)[0] - cost_duration.min(dim=0)[0])
 
             C = C.view(bs, num_queries, -1).cpu()
 
@@ -306,5 +322,7 @@ def build_matcher_cl(args):
                             cost_alpha = args.cost_alpha,
                             cost_gamma = args.cost_gamma,
                             cost_cl= vars(args).get('set_cost_cl', 0.),
+                            cost_center=getattr(args, 'set_cost_center', 0.0),
+                            cost_duration=getattr(args, 'set_cost_duration', 0.0),
                             opt=args,
                             )

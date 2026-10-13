@@ -382,6 +382,47 @@ class SetCriterion_cl(nn.Module):
             self_iou_split += cc.sum() / (0.5 * (sizes[i]) * (sizes[i]-1))
         losses['loss_self_iou'] = self_iou_split
 
+        if float(getattr(self.opt, 'temporal_order_loss_coef', 0.0)) > 0:
+            order_pair_losses = []
+            margin = float(getattr(self.opt, 'temporal_order_margin', 0.0))
+            for batch_idx, (src_ids, tgt_ids) in enumerate(indices):
+                if len(src_ids) < 2:
+                    continue
+                pred = outputs['pred_boxes'][batch_idx, src_ids]
+                target = targets[batch_idx]['boxes'][tgt_ids]
+                pred_start = pred[:, 0] - 0.5 * pred[:, 1]
+                pred_end = pred[:, 0] + 0.5 * pred[:, 1]
+                target_start = target[:, 0] - 0.5 * target[:, 1]
+                target_end = target[:, 0] + 0.5 * target[:, 1]
+
+                pair_i, pair_j = torch.triu_indices(len(src_ids), len(src_ids), offset=1,
+                                                    device=pred.device)
+                gt_before = target_end[pair_i] <= target_start[pair_j]
+                gt_after = target_end[pair_j] <= target_start[pair_i]
+                gt_overlap = ~(gt_before | gt_after)
+
+                pred_before_penalty = F.relu(
+                    pred_end[pair_i] + margin - pred_start[pair_j]
+                )
+                pred_after_penalty = F.relu(
+                    pred_end[pair_j] + margin - pred_start[pair_i]
+                )
+                pred_overlap_penalty = (
+                    F.relu(pred_start[pair_j] - pred_end[pair_i]) +
+                    F.relu(pred_start[pair_i] - pred_end[pair_j])
+                )
+                pair_loss = torch.zeros_like(pred_before_penalty)
+                pair_loss = torch.where(gt_before, pred_before_penalty, pair_loss)
+                pair_loss = torch.where(gt_after, pred_after_penalty, pair_loss)
+                pair_loss = torch.where(gt_overlap, pred_overlap_penalty, pair_loss)
+                order_pair_losses.append(pair_loss)
+
+            if order_pair_losses:
+                losses['loss_temporal_order'] = torch.cat(order_pair_losses).mean()
+            else:
+                losses['loss_temporal_order'] = outputs['pred_boxes'].sum() * 0.0
+
+
         return losses
 
 

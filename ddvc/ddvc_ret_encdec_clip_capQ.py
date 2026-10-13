@@ -189,6 +189,14 @@ class CM2(nn.Module):
             nn.Linear(hidden_dim, hidden_dim), nn.GELU(), nn.Linear(hidden_dim, 768)
         ) if getattr(opt, 'semantic_caption_matching', False) else None
         self._semantic_gt_lookup = None
+        self.temporal_query_embed = nn.Sequential(
+            nn.Linear(2, hidden_dim), nn.GELU(), nn.Linear(hidden_dim, hidden_dim)
+        ) if getattr(opt, 'enable_temporal_query_embedding', False) else None
+        if self.temporal_query_embed is not None:
+            # Start as a no-op when loading a baseline checkpoint, then let the
+            # existing detection/caption objectives learn how to use time.
+            nn.init.zeros_(self.temporal_query_embed[-1].weight)
+            nn.init.zeros_(self.temporal_query_embed[-1].bias)
         # self.query_embed_cap = nn.Embedding(num_queries, hidden_dim * 2)
 
 
@@ -673,7 +681,7 @@ class CM2(nn.Module):
                 # tgt_cap_add=tgt_cap+query_add
 
 
-            if self.semantic_interaction_layers is not None:
+            if self.semantic_interaction_layers is not None or self.temporal_query_embed is not None:
                 hs_list = []
                 hs_cap_list = []
                 inter_refs = []
@@ -684,6 +692,11 @@ class CM2(nn.Module):
 
                 decoder = self.transformer.decoder
                 for lid, layer in enumerate(decoder.layers):
+                    if self.temporal_query_embed is not None:
+                        # cur_ref uses normalized (center, duration) coordinates.
+                        time_context = self.temporal_query_embed(cur_ref.detach())
+                        cur_tgt = cur_tgt + time_context
+                        cur_tgt_cap = cur_tgt_cap + time_context
                     if cur_ref.shape[-1] == 2:
                         ref_input = cur_ref[:, :, None] * torch.stack([valid_ratios, valid_ratios], -1)[:, None]
                         if self.opt.text_crossAttn and txt_valid_ratios is not None:
@@ -712,9 +725,10 @@ class CM2(nn.Module):
                                             mask_flatten, proposals_mask)
 
                     # 2. Semantic-Guided Visual Re-Attendance (Cách B: Dùng Q_cap hướng dẫn Q_loc rà soát lại video)
-                    cur_tgt, cur_tgt_cap = self.semantic_interaction_layers[lid](
-                        cur_tgt, cur_tgt_cap, ref_input, memory, temporal_shapes, level_start_index, mask_flatten
-                    )
+                    if self.semantic_interaction_layers is not None:
+                        cur_tgt, cur_tgt_cap = self.semantic_interaction_layers[lid](
+                            cur_tgt, cur_tgt_cap, ref_input, memory, temporal_shapes, level_start_index, mask_flatten
+                        )
 
                     # 3. Box refinement (tinh chỉnh tọa độ ranh giới thời gian)
                     if not disable_iterative_refine:
@@ -1773,6 +1787,7 @@ def build(args):
                    'loss_bbox': args.bbox_loss_coef,
                    'loss_giou': args.giou_loss_coef,
                    'loss_boundary_nll': args.boundary_nll_loss_coef,
+                   'loss_temporal_order': getattr(args, 'temporal_order_loss_coef', 0.0),
                    'loss_counter': args.count_loss_coef,
                    'loss_caption': args.caption_loss_coef,
                    'loss_semantic_caption': (getattr(args, 'semantic_caption_loss_coef', 0.2)
