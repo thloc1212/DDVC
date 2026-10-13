@@ -1522,6 +1522,7 @@ def build(args):
                    'loss_caption_cl':args.loss_caption_cl,
                    'contrastive_loss': args.contrastive_loss_coef,
                    'loss_contrastive': args.contrastive_loss_coef,
+                   'loss_temporal_order': getattr(args, 'temporal_order_loss_coef', 0.0),
                    }
     # TODO this is a hack
     if args.aux_loss:

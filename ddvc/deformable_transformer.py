@@ -46,7 +46,8 @@ class DeformableTransformer(nn.Module):
         decoder_layer = DeformableTransformerDecoderLayer(d_model, dim_feedforward,
                                                           dropout, activation,
                                                           num_feature_levels, nhead, dec_n_points,args)
-        self.decoder = DeformableTransformerDecoder(decoder_layer, num_decoder_layers, return_intermediate_dec)
+        self.decoder = DeformableTransformerDecoder(decoder_layer, num_decoder_layers,
+                                                    return_intermediate_dec, args=args)
 
 
         self.pos_trans = nn.Linear(d_model, d_model * 2)
@@ -349,11 +350,14 @@ class DeformableTransformerDecoderLayer(nn.Module):
 
 
 class DeformableTransformerDecoder(nn.Module):
-    def __init__(self, decoder_layer, num_layers, return_intermediate=False):
+    def __init__(self, decoder_layer, num_layers, return_intermediate=False, args=None):
         super().__init__()
         self.layers = _get_clones(decoder_layer, num_layers)
         self.num_layers = num_layers
         self.return_intermediate = return_intermediate
+        # Fixed sinusoids add no parameters, preserving strict loading of DDVC checkpoints.
+        self.enable_temporal_query_embedding = bool(
+            getattr(args, 'enable_temporal_query_embedding', False))
         # hack implementation for iterative bounding box refinement and two-stage Deformable DETR
         self.bbox_head = None
 
@@ -366,6 +370,14 @@ class DeformableTransformerDecoder(nn.Module):
         intermediate_reference_points = []
         bs = tgt.shape[0]
         for lid, layer in enumerate(self.layers):
+            if self.enable_temporal_query_embedding:
+                center = reference_points[..., 0]
+                if self.bbox_head is not None:
+                    duration = self.bbox_head[max(0, lid - 1)](output)[..., 1].sigmoid()
+                else:
+                    duration = torch.full_like(center, 0.5)
+                output = output + self._temporal_query_position(center, duration, output.shape[-1])
+
             if reference_points.shape[-1] == 2:
                 reference_points_input = reference_points[:, :, None] \
                                          * torch.stack([src_valid_ratios, src_valid_ratios], -1)[:, None]
@@ -407,6 +419,16 @@ class DeformableTransformerDecoder(nn.Module):
             return torch.stack(intermediate), torch.stack(intermediate_reference_points)
 
         return output, reference_points
+
+    @staticmethod
+    def _temporal_query_position(center, duration, hidden_dim):
+        """Encode normalized event center and duration with fixed sinusoids."""
+        num_feats = (hidden_dim + 3) // 4
+        dim_t = 10000 ** (torch.arange(num_feats, device=center.device, dtype=torch.float32) / num_feats)
+        values = torch.stack((center, duration), dim=-1).float().unsqueeze(-1) * (2 * math.pi)
+        phase = values / dim_t
+        encoded = torch.stack((phase.sin(), phase.cos()), dim=-1).flatten(-3)
+        return encoded[..., :hidden_dim].to(dtype=center.dtype)
 
 
 def _get_clones(module, N):

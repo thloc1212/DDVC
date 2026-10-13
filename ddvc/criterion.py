@@ -376,6 +376,29 @@ class SetCriterion_cl(nn.Module):
             self_iou_split += cc.sum() / (0.5 * (sizes[i]) * (sizes[i]-1))
         losses['loss_self_iou'] = self_iou_split
 
+        # Preserve target pairwise order without assigning a fixed meaning to
+        # query indices. Overlapping GT events are unconstrained.
+        order_terms = []
+        margin = float(getattr(self.opt, 'temporal_order_margin', 0.01))
+        for batch_i, (src_ids, tgt_ids) in enumerate(indices):
+            if len(src_ids) < 2:
+                continue
+            pred = outputs['pred_boxes'][batch_i, src_ids]
+            gt = targets[batch_i]['boxes'][tgt_ids]
+            gt_start = gt[:, 0] - gt[:, 1] * 0.5
+            gt_end = gt[:, 0] + gt[:, 1] * 0.5
+            pred_center = pred[:, 0]
+            for i in range(len(src_ids)):
+                for j in range(i + 1, len(src_ids)):
+                    if gt_end[i] <= gt_start[j]:
+                        order_terms.append(F.relu(margin - (pred_center[j] - pred_center[i])))
+                    elif gt_end[j] <= gt_start[i]:
+                        order_terms.append(F.relu(margin - (pred_center[i] - pred_center[j])))
+        if order_terms:
+            losses['loss_temporal_order'] = torch.stack(order_terms).mean()
+        else:
+            losses['loss_temporal_order'] = outputs['pred_boxes'].sum() * 0.0
+
         return losses
 
 

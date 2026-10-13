@@ -168,6 +168,8 @@ class HungarianMatcher_cl(nn.Module):
                  cost_alpha = 0.25,
                  cost_gamma = 2,
                  cost_cl = 0,
+                 cost_center = 0.0,
+                 cost_duration = 0.0,
                  opt=None):
         """Creates the matcher
 
@@ -184,6 +186,8 @@ class HungarianMatcher_cl(nn.Module):
         self.cost_alpha = cost_alpha
         self.cost_gamma = cost_gamma
         self.cost_cl = cost_cl
+        self.cost_center = cost_center
+        self.cost_duration = cost_duration
         self.opt = opt
 
 
@@ -231,6 +235,8 @@ class HungarianMatcher_cl(nn.Module):
 
             # Compute the L1 cost between boxes
             cost_bbox = torch.cdist(out_bbox, tgt_bbox, p=1)
+            cost_center = torch.cdist(out_bbox[:, 0:1], tgt_bbox[:, 0:1], p=1)
+            cost_duration = torch.cdist(out_bbox[:, 1:2], tgt_bbox[:, 1:2], p=1)
 
             # Compute the giou cost betwen boxes
             cost_giou = -generalized_box_iou(box_cl_to_xy(out_bbox),
@@ -242,7 +248,10 @@ class HungarianMatcher_cl(nn.Module):
                 cost_cl = -1 * outputs['cl_match_mats']
 
             # Final cost matrix
-            C = self.cost_bbox * cost_bbox + self.cost_class * cost_class + self.cost_giou * cost_giou + self.cost_cl * cost_cl +self.cost_caption * cost_caption
+            C = (self.cost_bbox * cost_bbox + self.cost_center * cost_center
+                 + self.cost_duration * cost_duration + self.cost_class * cost_class
+                 + self.cost_giou * cost_giou + self.cost_cl * cost_cl
+                 + self.cost_caption * cost_caption)
             if self.opt is not None and self.opt.set_cost_caption > 0 and 'cap_cost_mat' in outputs:
                 C = C + self.opt.set_cost_caption * outputs['cap_cost_mat']
             costs = {'cost_bbox': cost_bbox,
@@ -297,5 +306,7 @@ def build_matcher_cl(args):
                             cost_alpha = args.cost_alpha,
                             cost_gamma = args.cost_gamma,
                             cost_cl= vars(args).get('set_cost_cl', 0.),
+                            cost_center=getattr(args, 'set_cost_center', 0.0),
+                            cost_duration=getattr(args, 'set_cost_duration', 0.0),
                             opt=args,
                             )

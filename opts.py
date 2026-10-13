@@ -138,6 +138,16 @@ def parse_opts():
     parser.add_argument('--set_cost_class', type=float, default=1)
     parser.add_argument('--set_cost_bbox', type=float, default=5)
     parser.add_argument('--set_cost_giou', type=float, default=2)
+    parser.add_argument('--set_cost_center', type=float, default=0.0,
+                        help='Additional temporal matching cost on normalized event centers')
+    parser.add_argument('--set_cost_duration', type=float, default=0.0,
+                        help='Additional temporal matching cost on normalized event durations')
+    parser.add_argument('--enable_temporal_query_embedding', action='store_true', default=False,
+                        help='Add a deterministic center-duration encoding to each decoder query')
+    parser.add_argument('--temporal_order_loss_coef', type=float, default=0.0,
+                        help='Weight for pairwise temporal order loss between matched events')
+    parser.add_argument('--temporal_order_margin', type=float, default=0.01,
+                        help='Minimum normalized center separation for temporally ordered events')
     parser.add_argument('--cost_alpha', type=float, default=0.25)
     parser.add_argument('--cost_gamma', type=float, default=2)
 
