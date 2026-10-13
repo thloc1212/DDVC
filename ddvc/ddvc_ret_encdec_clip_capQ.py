@@ -1178,33 +1178,49 @@ class CM2(nn.Module):
             if self.training:
                 seq = dt['cap_tensor'][cap_bigids]
                 if self.opt.caption_cost_type != 'rl':
-                    cap_head_output=cap_head(hs[:, feat_bigids].permute(1,0,2), caption_tensor, caption_mask, others, seq,dt["video_tensor"],get_loss=True)
-                    cap_prob = cap_head_output.logits
-                    # cap_loss=cap_head_output.loss
-                    cap_probs['cap_prob_train'] = cap_prob
+                    # Caption costs are required for all query-caption pairs before
+                    # Hungarian matching. Chunking bounds peak memory on a single T4.
+                    pair_count = len(feat_bigids)
+                    chunk_size = max(1, int(getattr(self.opt, 'caption_cost_chunk_size', 16)))
+                    pair_losses = []
+                    loss_fct = CrossEntropyLoss(ignore_index=50256, reduction='none')
+                    original_shift_labels = caption_tensor[:, 1:]
+                    truncate_after_period = bool(
+                        original_shift_labels.shape[0] > 0
+                        and original_shift_labels[0, 0].item() != 50256
+                        and (original_shift_labels[0] == 25).any().item())
 
-                    # move labels to correct device to enable model parallelism
-                    labels = caption_tensor
-                    # Shift so that tokens < n predict n
-                    shift_logits = cap_prob[..., :-1, :].contiguous()
-                    shift_labels = labels[..., 1:].contiguous()
-                    # Flatten the tokens
-                    # loss_fct = CrossEntropyLoss()
-                    ##################################################
-                    loss_fct = CrossEntropyLoss(ignore_index = 50256,reduction='none')
-                    if shift_labels[0][0] != 50256 and 25 in shift_labels[0]:
-                        for i in range(shift_labels.shape[0]):
-                            for j in range(shift_labels.shape[1]):
-                                if shift_labels[i][j] == 25:
-                                    shift_labels[i][j] = 50256
-                                    break
-                                shift_labels[i][j] = 50256
-                    ##################################################
+                    for pair_start in range(0, pair_count, chunk_size):
+                        pair_end = min(pair_start + chunk_size, pair_count)
+                        labels_chunk = caption_tensor[pair_start:pair_end]
+                        mask_chunk = caption_mask[pair_start:pair_end]
+                        chunk_output = cap_head(
+                            hs[:, feat_bigids[pair_start:pair_end]].permute(1, 0, 2),
+                            labels_chunk, mask_chunk, others, labels_chunk,
+                            dt["video_tensor"], get_loss=False)
+                        shift_logits = chunk_output.logits[..., :-1, :].contiguous()
+                        shift_labels = labels_chunk[..., 1:].contiguous().clone()
 
-                    cap_my_loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
-                    loss_per_token = cap_my_loss.view(N_q,dt['cap_tensor'].shape[0] ,-1)
-                    valid_token_counts = caption_mask.view(N_q,dt['cap_tensor'].shape[0] ,-1).sum(dim=-1)  # 每条文本的有效 token 数
-                    cap_loss = loss_per_token.sum(dim=-1) / valid_token_counts 
+                        # Preserve the original rule: ignore tokens through the
+                        # first period when the first reference contains a period.
+                        if truncate_after_period and shift_labels.shape[1] > 0:
+                            period_mask = shift_labels.eq(25)
+                            has_period = period_mask.any(dim=1)
+                            first_period = period_mask.float().argmax(dim=1)
+                            positions = torch.arange(shift_labels.shape[1], device=shift_labels.device)[None, :]
+                            ignored_prefix = (~has_period[:, None]) | (positions <= first_period[:, None])
+                            shift_labels[ignored_prefix] = 50256
+
+                        token_loss = loss_fct(
+                            shift_logits.view(-1, shift_logits.size(-1)),
+                            shift_labels.view(-1)).view(pair_end - pair_start, -1)
+                        valid_token_counts = mask_chunk.sum(dim=-1).clamp_min(1)
+                        pair_losses.append(token_loss.sum(dim=-1) / valid_token_counts)
+                        del chunk_output, shift_logits, shift_labels, token_loss
+
+                    cap_loss = torch.cat(pair_losses).view(N_q, dt['cap_tensor'].shape[0])
+                    # Do not retain the full all-pair logits after reducing them to costs.
+                    cap_probs['cap_prob_train'] = torch.empty(0, device=hs.device)
 
             else:
                 with torch.no_grad():

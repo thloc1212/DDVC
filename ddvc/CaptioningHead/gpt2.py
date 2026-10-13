@@ -50,7 +50,10 @@ class GPT2CaptionModel(nn.Module):
         input_emb=self.model.transformer.wte(cap_label)
         input_emb[:,:1,:]=prefix_emb
         if self.opt.add_cross_attention==False:
-            output=self.model(inputs_embeds=input_emb,attention_mask=cap_mask, labels=cap_label)
+            if get_loss:
+                output=self.model(inputs_embeds=input_emb,attention_mask=cap_mask, labels=cap_label)
+            else:
+                output=self.model(inputs_embeds=input_emb,attention_mask=cap_mask)
         else:
             cross_emb=clip_fram_feature.repeat(hs.shape[0],1,1).detach()
             if get_loss:

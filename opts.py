@@ -148,6 +148,8 @@ def parse_opts():
                         help='Weight for pairwise temporal order loss between matched events')
     parser.add_argument('--temporal_order_margin', type=float, default=0.01,
                         help='Minimum normalized center separation for temporally ordered events')
+    parser.add_argument('--caption_cost_chunk_size', type=int, default=16,
+                        help='Number of query-caption pairs evaluated together when building matching costs')
     parser.add_argument('--cost_alpha', type=float, default=0.25)
     parser.add_argument('--cost_gamma', type=float, default=2)
 
