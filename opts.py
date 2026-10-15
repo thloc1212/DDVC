@@ -144,6 +144,8 @@ def parse_opts():
                         help='Additional temporal matching cost on normalized event durations')
     parser.add_argument('--enable_temporal_query_embedding', action='store_true', default=False,
                         help='Add a deterministic center-duration encoding to each decoder query')
+    parser.add_argument('--enable_gated_temporal_fusion', action='store_true', default=False,
+                        help='Fuse temporal query encoding through a learnable projection and sigmoid gate')
     parser.add_argument('--temporal_order_loss_coef', type=float, default=0.0,
                         help='Weight for pairwise temporal order loss between matched events')
     parser.add_argument('--temporal_order_margin', type=float, default=0.01,

@@ -358,6 +358,16 @@ class DeformableTransformerDecoder(nn.Module):
         # Fixed sinusoids add no parameters, preserving strict loading of DDVC checkpoints.
         self.enable_temporal_query_embedding = bool(
             getattr(args, 'enable_temporal_query_embedding', False))
+        self.enable_gated_temporal_fusion = bool(
+            getattr(args, 'enable_gated_temporal_fusion', False))
+        if self.enable_temporal_query_embedding and self.enable_gated_temporal_fusion:
+            hidden_dim = decoder_layer.self_attn.embed_dim
+            self.temporal_projection = nn.Linear(hidden_dim, hidden_dim)
+            self.temporal_gate = nn.Linear(hidden_dim * 2, hidden_dim)
+            # Start by using a small amount of temporal signal; the gate learns
+            # per-query, per-channel how much temporal context to retain.
+            nn.init.zeros_(self.temporal_gate.weight)
+            nn.init.constant_(self.temporal_gate.bias, -2.0)
         # hack implementation for iterative bounding box refinement and two-stage Deformable DETR
         self.bbox_head = None
 
@@ -376,7 +386,15 @@ class DeformableTransformerDecoder(nn.Module):
                     duration = self.bbox_head[max(0, lid - 1)](output)[..., 1].sigmoid()
                 else:
                     duration = torch.full_like(center, 0.5)
-                output = output + self._temporal_query_position(center, duration, output.shape[-1])
+                temporal = self._temporal_query_position(center, duration, output.shape[-1])
+                if self.enable_gated_temporal_fusion:
+                    temporal = self.temporal_projection(temporal)
+                    gate = torch.sigmoid(self.temporal_gate(torch.cat((output, temporal), dim=-1)))
+                    output = output + gate * temporal
+                else:
+                    # Keep the earlier fixed-addition experiment available for
+                    # direct ablations and old configurations.
+                    output = output + temporal
 
             if reference_points.shape[-1] == 2:
                 reference_points_input = reference_points[:, :, None] \
