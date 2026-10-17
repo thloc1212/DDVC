@@ -32,6 +32,7 @@ from data.video_dataset import PropSeqDataset, collate_fn
 from ddvc.ddvc_ret_encdec_clip_capQ import build
 from collections import OrderedDict
 from ret_utils import load_clip_memory_bank, load_clip_gt
+from misc.temporal_diagnostics import write_temporal_diagnostics
 
 # global clip_gt
 def train(opt):
@@ -261,6 +262,7 @@ def train(opt):
                         .format(opt.id, iteration, epoch, loss_sum,
                                 (end - start) / losses_log_every, bad_video_num))
 
+                write_temporal_diagnostics(save_folder, 'train', epoch, iteration, loss_sum)
                 tf_writer.add_scalar('lr', opt.current_lr, iteration)
                 for loss_type in loss_sum.keys():
                     tf_writer.add_scalar(loss_type, loss_sum[loss_type], iteration)
@@ -296,6 +298,7 @@ def train(opt):
                 infer_mode=False
             infer_mode=True
             eval_score, eval_loss = evaluate(model,memory_bank, criterion,contrastive_criterion, postprocessors, val_loader, result_json_path, logger=logger, alpha=opt.ec_alpha, device=opt.device, debug=opt.debug,infer_mode=infer_mode)
+            write_temporal_diagnostics(save_folder, 'validation', epoch, iteration, eval_loss, eval_score)
             if opt.caption_decoder_type == 'none':
                 current_score = 2./(1./eval_score['Precision'] + 1./eval_score['Recall'])
             else:

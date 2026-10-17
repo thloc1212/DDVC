@@ -370,11 +370,14 @@ class DeformableTransformerDecoder(nn.Module):
             nn.init.constant_(self.temporal_gate.bias, -2.0)
         # hack implementation for iterative bounding box refinement and two-stage Deformable DETR
         self.bbox_head = None
+        self.temporal_diagnostics = {}
 
     def forward(self, tgt, reference_points, src, src_temporal_shapes, src_level_start_index, src_valid_ratios,
                 query_pos=None, src_padding_mask=None, query_padding_mask=None, disable_iterative_refine=False,text_feat=None,
                 txt_temporal_shapes=None, txt_level_start_index=None, txt_valid_ratios=None,txt_mask_flatten=None ):
         output = tgt
+        # Each decoder call has its own detached statistics (localization or caption).
+        self.temporal_diagnostics = {}
 
         intermediate = []
         intermediate_reference_points = []
@@ -387,13 +390,22 @@ class DeformableTransformerDecoder(nn.Module):
                 else:
                     duration = torch.full_like(center, 0.5)
                 temporal = self._temporal_query_position(center, duration, output.shape[-1])
+                raw_temporal = temporal
                 if self.enable_gated_temporal_fusion:
                     temporal = self.temporal_projection(temporal)
                     gate = torch.sigmoid(self.temporal_gate(torch.cat((output, temporal), dim=-1)))
+                    self.temporal_diagnostics.update({
+                        'layer{}_{}'.format(lid, key): value
+                        for key, value in self._fusion_diagnostics(
+                            output, raw_temporal, temporal, gate, query_padding_mask).items()})
                     output = output + gate * temporal
                 else:
                     # Keep the earlier fixed-addition experiment available for
                     # direct ablations and old configurations.
+                    self.temporal_diagnostics.update({
+                        'layer{}_{}'.format(lid, key): value
+                        for key, value in self._fusion_diagnostics(
+                            output, raw_temporal, temporal, None, query_padding_mask).items()})
                     output = output + temporal
 
             if reference_points.shape[-1] == 2:
@@ -437,6 +449,48 @@ class DeformableTransformerDecoder(nn.Module):
             return torch.stack(intermediate), torch.stack(intermediate_reference_points)
 
         return output, reference_points
+
+    @staticmethod
+    def _fusion_diagnostics(query, raw_temporal, temporal, gate, valid_queries=None):
+        """Small scalar summaries; never retain a training graph or padded queries."""
+        with torch.no_grad():
+            query, raw_temporal, temporal = (
+                value.detach().float() for value in (query, raw_temporal, temporal))
+            if gate is not None:
+                gate = gate.detach().float()
+            if valid_queries is not None:
+                valid_queries = valid_queries.bool()
+                query, raw_temporal, temporal = (
+                    value[valid_queries] for value in (query, raw_temporal, temporal))
+                if gate is not None:
+                    gate = gate[valid_queries]
+            if query.numel() == 0:
+                return {}
+            delta = temporal if gate is None else gate * temporal
+            query_norm = query.norm(dim=-1).mean()
+            raw_norm = raw_temporal.norm(dim=-1).mean()
+            temporal_norm = temporal.norm(dim=-1).mean()
+            delta_norm = delta.norm(dim=-1).mean()
+            stats = {
+                'query_norm': query_norm,
+                'raw_temporal_norm': raw_norm,
+                'projected_temporal_norm': temporal_norm,
+                'delta_norm': delta_norm,
+                'delta_query_ratio': delta_norm / query_norm.clamp_min(1e-6),
+                'projection_scale': temporal_norm / raw_norm.clamp_min(1e-6),
+                'gate_effective_scale': delta_norm / temporal_norm.clamp_min(1e-6),
+                'delta_query_cosine': F.cosine_similarity(delta, query, dim=-1).mean(),
+            }
+            if gate is not None:
+                stats.update({
+                    'gate_mean': gate.mean(),
+                    'gate_std': gate.std(unbiased=False),
+                    'gate_min': gate.min(),
+                    'gate_max': gate.max(),
+                    'gate_closed_fraction': gate.lt(0.05).float().mean(),
+                    'gate_open_fraction': gate.gt(0.95).float().mean(),
+                })
+            return stats
 
     @staticmethod
     def _temporal_query_position(center, duration, hidden_dim):

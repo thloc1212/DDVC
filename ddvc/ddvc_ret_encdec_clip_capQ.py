@@ -644,11 +644,15 @@ class CM2(nn.Module):
                 # tgt_cap_add=tgt_cap+query_add
 
 
+            temporal_diagnostics = {}
             if self.opt.text_crossAttn:
                 hs, inter_references = self.transformer.forward_decoder(tgt, reference_points, memory, temporal_shapes,
                                                                     level_start_index, valid_ratios, query_embed,
                                                                     mask_flatten, proposals_mask, disable_iterative_refine,
                                                                     text_feat, txt_temporal_shapes, txt_level_start_index, txt_valid_ratios,txt_mask_flatten )
+                temporal_diagnostics.update({
+                    'diag_temporal_loc_' + key: value
+                    for key, value in self.transformer.decoder.temporal_diagnostics.items()})
 
                 # hs_cap, inter_references_cap = self.transformer.forward_decoder(tgt_cap_add, reference_points, memory, temporal_shapes,
                 #                                                     level_start_index, valid_ratios, query_embed,
@@ -660,6 +664,9 @@ class CM2(nn.Module):
                                                                     level_start_index, valid_ratios, query_embed,
                                                                     mask_flatten, proposals_mask, disable_iterative_refine,
                                                                     text_feat, txt_temporal_shapes, txt_level_start_index, txt_valid_ratios,txt_mask_flatten )
+                temporal_diagnostics.update({
+                    'diag_temporal_cap_' + key: value
+                    for key, value in self.transformer.decoder.temporal_diagnostics.items()})
                 if self.opt.capQ_addP=="after":
                     hs_cap=hs+hs_cap_tmp
                 else:
@@ -668,6 +675,9 @@ class CM2(nn.Module):
                 hs, inter_references = self.transformer.forward_decoder(tgt, reference_points, memory, temporal_shapes,
                                                                         level_start_index, valid_ratios, query_embed,
                                                                         mask_flatten, proposals_mask, disable_iterative_refine)
+                temporal_diagnostics.update({
+                    'diag_temporal_loc_' + key: value
+                    for key, value in self.transformer.decoder.temporal_diagnostics.items()})
             text_embed=[[text_embed],[text_embed]]
             retrieved_embed=retrieved_embed.unsqueeze(0).repeat(2,1,1,1)
             
@@ -689,6 +699,8 @@ class CM2(nn.Module):
 
             # l_dict = {'loss_caption_cl': cl_loss[0],'loss_caption_cl_0': cl_loss[1]}
             # loss.update(l_dict)
+            # Not present in criterion.weight_dict: diagnostic scalars add no loss.
+            loss.update(temporal_diagnostics)
             return out, loss
         else:
             return memory
