@@ -379,6 +379,7 @@ class SetCriterion_cl(nn.Module):
         # Preserve target pairwise order without assigning a fixed meaning to
         # query indices. Overlapping GT events are unconstrained.
         order_terms = []
+        eligible_order_pairs = 0
         margin = float(getattr(self.opt, 'temporal_order_margin', 0.01))
         for batch_i, (src_ids, tgt_ids) in enumerate(indices):
             if len(src_ids) < 2:
@@ -391,13 +392,26 @@ class SetCriterion_cl(nn.Module):
             for i in range(len(src_ids)):
                 for j in range(i + 1, len(src_ids)):
                     if gt_end[i] <= gt_start[j]:
-                        order_terms.append(F.relu(margin - (pred_center[j] - pred_center[i])))
+                        violation = F.relu(margin - (pred_center[j] - pred_center[i]))
+                        order_terms.append(violation)
+                        eligible_order_pairs += 1
                     elif gt_end[j] <= gt_start[i]:
-                        order_terms.append(F.relu(margin - (pred_center[i] - pred_center[j])))
+                        violation = F.relu(margin - (pred_center[i] - pred_center[j]))
+                        order_terms.append(violation)
+                        eligible_order_pairs += 1
         if order_terms:
-            losses['loss_temporal_order'] = torch.stack(order_terms).mean()
+            order_terms = torch.stack(order_terms)
+            losses['loss_temporal_order'] = order_terms.mean()
+            violating_order_pairs = order_terms.detach().gt(0).sum().to(dtype=outputs['pred_boxes'].dtype)
         else:
             losses['loss_temporal_order'] = outputs['pred_boxes'].sum() * 0.0
+            violating_order_pairs = outputs['pred_boxes'].new_zeros(())
+
+        # Diagnostics are deliberately absent from weight_dict, so they are
+        # logged but never added to the optimized objective.
+        losses['diag_temporal_order_eligible_pairs'] = outputs['pred_boxes'].new_tensor(
+            float(eligible_order_pairs))
+        losses['diag_temporal_order_violating_pairs'] = violating_order_pairs
 
         return losses
 
