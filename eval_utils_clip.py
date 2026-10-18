@@ -249,12 +249,13 @@ def evaluate(model,memory_bank,criterion,contrastive_criterion, postprocessors, 
         out_json_tal = collect_tal_result(out_json, loader.dataset.name_map)
         save_dvc_json(out_json_tal, tal_result_json_path)  
     
-    save_dvc_json(out_json, dvc_json_path)
-
-    try:
-        plot_proposal_distribution(dvc_json_path)
-    except:
-        pass
+    # Keep every decoder candidate for diagnosis, but preserve the final
+    # metric input at dvc_json_path. Previously the raw proposals were saved
+    # over the reranked/top-N file after evaluation, making the saved result
+    # disagree with the reported metrics.
+    raw_dvc_json_path = dvc_json_path[:-5] + '.raw.json' if dvc_json_path.endswith('.json') else dvc_json_path + '.raw.json'
+    save_dvc_json(out_json, raw_dvc_json_path)
+    metric_json_path = raw_dvc_json_path
     
     for k in loss_sum.keys():
         loss_sum[k] = np.round(loss_sum[k] / (len(loader) + 1e-5), 3).item()
@@ -264,12 +265,12 @@ def evaluate(model,memory_bank,criterion,contrastive_criterion, postprocessors, 
         logger.info('loss: {}'.format(loss_sum))
 
     if opt.count_loss_coef > 0:
-        dvc_json_path = reranking(dvc_json_path, alpha=alpha, cl_score_weight=opt.eval_matching_score_weight, temperature=2.0)
+        metric_json_path = reranking(raw_dvc_json_path, alpha=alpha, cl_score_weight=opt.eval_matching_score_weight, temperature=2.0)
     save_dvc_json(out_json_g, dvc_json_path + '.grounding.json')
     save_dvc_json(aux_out_json_g, dvc_json_path + '_aux.grounding.json')
     skip_lang_eval = skip_lang_eval or vars(opt).get('eval_disable_captioning', False)
     if not skip_lang_eval:
-        scores = eval_metrics(dvc_json_path,
+        scores = eval_metrics(metric_json_path,
                               gt_filenames=opt.gt_file_for_eval,
                               para_gt_filenames=opt.gt_file_for_para_eval,
                               alpha=alpha,
@@ -280,7 +281,6 @@ def evaluate(model,memory_bank,criterion,contrastive_criterion, postprocessors, 
                               )
     else:
         scores = {}
-    out_json.update(scores)
     scores_g = eval_metrics_grounding(dvc_json_path + '.grounding.json', gt_filename=opt.eval_gt_file_for_grounding)
     aux_scores_g = eval_metrics_grounding(dvc_json_path + '_aux.grounding.json', gt_filename=opt.eval_gt_file_for_grounding)
     rename_aux_scores_g = {'aux_' + key: value for key, value in aux_scores_g.items()}
@@ -293,7 +293,16 @@ def evaluate(model,memory_bank,criterion,contrastive_criterion, postprocessors, 
         out_json_tal.update(score_tal)
         save_dvc_json(out_json_tal, tal_result_json_path)
         scores.update(score_tal) 
-    save_dvc_json(out_json, dvc_json_path)
+
+    # Save the same selected proposals that were passed to the evaluator.
+    final_json = json.load(open(metric_json_path, 'r'))
+    final_json.update(scores)
+    save_dvc_json(final_json, dvc_json_path)
+    try:
+        plot_proposal_distribution(dvc_json_path)
+    except Exception as exc:
+        if logger is not None:
+            logger.warning('Could not plot proposal distribution: {}'.format(exc))
     return scores, loss_sum
 
 def collect_tal_result(out, name_map):

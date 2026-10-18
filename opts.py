@@ -134,6 +134,13 @@ def parse_opts():
     parser.add_argument('--hidden_dropout_prob', type=float, default=0.5)
     parser.add_argument('--layer_norm_eps', type=float, default=1e-12)
     parser.add_argument('--caption_cost_type', type=str, default='loss')
+    parser.add_argument('--caption_cost_chunk_size', type=int, default=16)
+    parser.add_argument('--local_visual_attention', action='store_true', default=False,
+                        help='Caption each event using its predicted temporal interval')
+    parser.add_argument('--local_visual_context_ratio', type=float, default=0.1,
+                        help='Extra context on each side as a fraction of predicted duration')
+    parser.add_argument('--local_visual_min_frames', type=int, default=4,
+                        help='Minimum nearest valid frames exposed to each caption query')
     parser.add_argument('--set_cost_caption', type=float, default=0)
     parser.add_argument('--set_cost_class', type=float, default=1)
     parser.add_argument('--set_cost_bbox', type=float, default=5)

@@ -23,6 +23,7 @@ from .matcher import build_matcher_cl
 
 from .deformable_transformer import build_deforamble_transformer
 from ddvc.CaptioningHead import build_captioner
+from ddvc.CaptioningHead.local_visual import query_event_boxes
 import copy
 from .criterion import SetCriterion_cl, ContrastiveCriterion
 from misc.utils import decide_two_stage
@@ -697,6 +698,18 @@ class CM2(nn.Module):
         outputs_class0 = counter(hs_lid_pool)
         return outputs_class0
 
+    @staticmethod
+    def decode_event_boxes(logits, reference, disable_iterative_refine=False):
+        if disable_iterative_refine:
+            return reference
+        offset = inverse_sigmoid(reference)
+        if reference.shape[-1] == 2:
+            logits = logits + offset
+        else:
+            # A center-only reference must not also shift the duration logit.
+            logits = torch.cat((logits[..., :1] + offset, logits[..., 1:]), dim=-1)
+        return logits.sigmoid()
+
     def parallel_prediction_full_train(self, dt, criterion, contrastive_criterion, hs, init_reference, inter_references, others,
                                  disable_iterative_refine):
         outputs_classes = []
@@ -830,23 +843,14 @@ class CM2(nn.Module):
             tmp = self.bbox_head[l_id](hs_lid)  # [bs, num_query, 4]
 
             # if self.opt.disable_mid_caption_heads and (l_id != hs.shape[0] - 1):
+            outputs_coord = self.decode_event_boxes(tmp, reference, disable_iterative_refine)
             if l_id != hs.shape[0] - 1:
                 cap_probs, seq = self.caption_prediction_eval(
                     self.caption_head[l_id], dt, hs_lid_cap, reference, others, 'none')
             else:
                 cap_probs, seq = self.caption_prediction_eval(
-                    self.caption_head[l_id], dt, hs_lid_cap, reference, others, self.opt.caption_decoder_type)
-
-            if disable_iterative_refine:
-                outputs_coord = reference
-            else:
-                reference = inverse_sigmoid(reference)
-                if reference.shape[-1] == 2:
-                    tmp += reference
-                else:
-                    assert reference.shape[-1] == 1
-                    tmp[..., :2] += reference
-                outputs_coord = tmp.sigmoid()  # [bs, num_query, 4]
+                    self.caption_head[l_id], dt, hs_lid_cap, reference, others, self.opt.caption_decoder_type,
+                    event_boxes=outputs_coord)
 
             
             cl_match_mats.append(0)
@@ -907,25 +911,17 @@ class CM2(nn.Module):
 
             query_idxs=torch.arange(0, query_len).repeat_interleave(timestamp_len)
             seq_idxs = torch.arange(0, timestamp_len).repeat(query_len) # 包括 0 到 n 的整数
+            outputs_coord = self.decode_event_boxes(tmp, reference, disable_iterative_refine)
             with torch.no_grad():
                 cost_caption, loss_caption, cap_probs, seq = self.caption_prediction_no_grad(self.caption_head[l_id], dt, hs_lid_cap,
-                                                                                    reference, others, self.opt.caption_decoder_type,[(query_idxs,seq_idxs)])
+                                                                                    reference, others, self.opt.caption_decoder_type,[(query_idxs,seq_idxs)],
+                                                                                    event_boxes=outputs_coord)
             # cost_caption, loss_caption, cap_probs, seq = self.caption_prediction(self.caption_head[l_id], dt, hs_lid_cap,
             #                                                                      reference, others, "none")
 
             # tmp = self.bbox_head[l_id](hs_lid)  # [bs, num_query, 4]
             # cost_caption, loss_caption, cap_probs, seq = self.caption_prediction(self.caption_head[l_id], dt, hs_lid,
             #                                                                      reference, others, 'none')
-            if disable_iterative_refine:
-                outputs_coord = reference
-            else:
-                reference = inverse_sigmoid(reference)
-                if reference.shape[-1] == 2:
-                    tmp += reference
-                else:
-                    assert reference.shape[-1] == 1
-                    tmp[..., :1] += reference
-                outputs_coord = tmp.sigmoid()  # [bs, num_query, 4]
             
             cl_match_mats.append(0)
 
@@ -961,7 +957,8 @@ class CM2(nn.Module):
                 reference = init_reference if l_id == 0 else inter_references[l_id - 1]
                 indices = last_indices[0] if l_id == hs.shape[0] - 1 else aux_indices[l_id][0]
                 cap_loss, cap_probs, seq, cap_cl_loss = self.caption_prediction(self.caption_head[l_id], dt, hs_lid_cap, reference,
-                                                                   others, self.opt.caption_decoder_type, indices)
+                                                                   others, self.opt.caption_decoder_type, indices,
+                                                                   event_boxes=outputs_coords[l_id])
                 # cap_loss=out["caption_losses"][indices[0]].mean()
                 l_dict = {'loss_caption': cap_loss,"loss_caption_cl":cap_cl_loss}
                 
@@ -980,7 +977,8 @@ class CM2(nn.Module):
             hs_lid_cap = hs_cap[l_id]
             indices = last_indices[0]
             cap_loss, cap_probs, seq = self.caption_prediction(self.caption_head[l_id], dt, hs_lid_cap, reference,
-                                                               others, self.opt.caption_decoder_type, indices)
+                                                               others, self.opt.caption_decoder_type, indices,
+                                                               event_boxes=outputs_coords[l_id])
             l_dict = {'loss_caption': cap_loss}
             
             loss.update(l_dict)
@@ -1013,7 +1011,7 @@ class CM2(nn.Module):
         
         return out, loss
     
-    def caption_prediction(self, cap_head, dt, hs, reference, others, captioner_type, indices=None):
+    def caption_prediction(self, cap_head, dt, hs, reference, others, captioner_type, indices=None, event_boxes=None):
         N_, N_q, C = hs.shape
         all_cap_num = len(dt['cap_tensor'])
         query_mask = others['proposals_mask']
@@ -1076,7 +1074,7 @@ class CM2(nn.Module):
             if self.training:
                 seq = dt['cap_tensor'][cap_bigids]
                 if self.opt.caption_cost_type != 'rl':
-                    cap_head_output=cap_head(hs[:, feat_bigids].permute(1,0,2), caption_tensor, caption_mask, others, seq,dt["video_tensor"])
+                    cap_head_output=cap_head(hs[:, feat_bigids].permute(1,0,2), caption_tensor, caption_mask, others, seq,dt["video_tensor"], event_boxes=query_event_boxes(event_boxes, feat_bigids) if event_boxes is not None else None, video_mask=dt["video_mask"])
                     cap_prob = cap_head_output.logits
                     cap_loss=cap_head_output.loss
                     cap_probs['cap_prob_train'] = cap_prob
@@ -1084,7 +1082,7 @@ class CM2(nn.Module):
 
             else:
                 with torch.no_grad():
-                    cap_head_output=cap_head(hs[:, feat_bigids].permute(1,0,2), caption_tensor, caption_mask, others, seq,dt["video_tensor"])
+                    cap_head_output=cap_head(hs[:, feat_bigids].permute(1,0,2), caption_tensor, caption_mask, others, seq,dt["video_tensor"], event_boxes=query_event_boxes(event_boxes, feat_bigids) if event_boxes is not None else None, video_mask=dt["video_mask"])
                     cap_prob_eval = cap_head_output.logits
                     cap_loss=cap_head_output.loss
                     # if len(seq):
@@ -1115,7 +1113,7 @@ class CM2(nn.Module):
         return cost_caption, loss_caption, cap_probs, seq
 
 
-    def caption_prediction_no_grad(self, cap_head, dt, hs, reference, others, captioner_type, indices=None):
+    def caption_prediction_no_grad(self, cap_head, dt, hs, reference, others, captioner_type, indices=None, event_boxes=None):
         N_, N_q, C = hs.shape
         all_cap_num = len(dt['cap_tensor'])
         query_mask = others['proposals_mask']
@@ -1178,37 +1176,55 @@ class CM2(nn.Module):
             if self.training:
                 seq = dt['cap_tensor'][cap_bigids]
                 if self.opt.caption_cost_type != 'rl':
-                    cap_head_output=cap_head(hs[:, feat_bigids].permute(1,0,2), caption_tensor, caption_mask, others, seq,dt["video_tensor"],get_loss=True)
-                    cap_prob = cap_head_output.logits
-                    # cap_loss=cap_head_output.loss
-                    cap_probs['cap_prob_train'] = cap_prob
+                    # Caption costs are required for all query-caption pairs before
+                    # Hungarian matching. Chunking bounds peak memory on a single T4.
+                    pair_count = len(feat_bigids)
+                    chunk_size = max(1, int(getattr(self.opt, 'caption_cost_chunk_size', 16)))
+                    pair_losses = []
+                    loss_fct = CrossEntropyLoss(ignore_index=50256, reduction='none')
+                    original_shift_labels = caption_tensor[:, 1:]
+                    truncate_after_period = bool(
+                        original_shift_labels.shape[0] > 0
+                        and original_shift_labels[0, 0].item() != 50256
+                        and (original_shift_labels[0] == 25).any().item())
 
-                    # move labels to correct device to enable model parallelism
-                    labels = caption_tensor
-                    # Shift so that tokens < n predict n
-                    shift_logits = cap_prob[..., :-1, :].contiguous()
-                    shift_labels = labels[..., 1:].contiguous()
-                    # Flatten the tokens
-                    # loss_fct = CrossEntropyLoss()
-                    ##################################################
-                    loss_fct = CrossEntropyLoss(ignore_index = 50256,reduction='none')
-                    if shift_labels[0][0] != 50256 and 25 in shift_labels[0]:
-                        for i in range(shift_labels.shape[0]):
-                            for j in range(shift_labels.shape[1]):
-                                if shift_labels[i][j] == 25:
-                                    shift_labels[i][j] = 50256
-                                    break
-                                shift_labels[i][j] = 50256
-                    ##################################################
+                    for pair_start in range(0, pair_count, chunk_size):
+                        pair_end = min(pair_start + chunk_size, pair_count)
+                        labels_chunk = caption_tensor[pair_start:pair_end]
+                        mask_chunk = caption_mask[pair_start:pair_end]
+                        chunk_output = cap_head(
+                            hs[:, feat_bigids[pair_start:pair_end]].permute(1, 0, 2),
+                            labels_chunk, mask_chunk, others, labels_chunk,
+                            dt["video_tensor"], get_loss=False,
+                            event_boxes=query_event_boxes(event_boxes, feat_bigids[pair_start:pair_end]) if event_boxes is not None else None,
+                            video_mask=dt['video_mask'])
+                        shift_logits = chunk_output.logits[..., :-1, :].contiguous()
+                        shift_labels = labels_chunk[..., 1:].contiguous().clone()
 
-                    cap_my_loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
-                    loss_per_token = cap_my_loss.view(N_q,dt['cap_tensor'].shape[0] ,-1)
-                    valid_token_counts = caption_mask.view(N_q,dt['cap_tensor'].shape[0] ,-1).sum(dim=-1)  # 每条文本的有效 token 数
-                    cap_loss = loss_per_token.sum(dim=-1) / valid_token_counts 
+                        # Preserve the original rule: ignore tokens through the
+                        # first period when the first reference contains a period.
+                        if truncate_after_period and shift_labels.shape[1] > 0:
+                            period_mask = shift_labels.eq(25)
+                            has_period = period_mask.any(dim=1)
+                            first_period = period_mask.float().argmax(dim=1)
+                            positions = torch.arange(shift_labels.shape[1], device=shift_labels.device)[None, :]
+                            ignored_prefix = (~has_period[:, None]) | (positions <= first_period[:, None])
+                            shift_labels[ignored_prefix] = 50256
+
+                        token_loss = loss_fct(
+                            shift_logits.view(-1, shift_logits.size(-1)),
+                            shift_labels.view(-1)).view(pair_end - pair_start, -1)
+                        valid_token_counts = mask_chunk.sum(dim=-1).clamp_min(1)
+                        pair_losses.append(token_loss.sum(dim=-1) / valid_token_counts)
+                        del chunk_output, shift_logits, shift_labels, token_loss
+
+                    cap_loss = torch.cat(pair_losses).view(N_q, dt['cap_tensor'].shape[0])
+                    # Do not retain the full all-pair logits after reducing them to costs.
+                    cap_probs['cap_prob_train'] = torch.empty(0, device=hs.device)
 
             else:
                 with torch.no_grad():
-                    cap_head_output=cap_head(hs[:, feat_bigids].permute(1,0,2), caption_tensor, caption_mask, others, seq,dt["video_tensor"])
+                    cap_head_output=cap_head(hs[:, feat_bigids].permute(1,0,2), caption_tensor, caption_mask, others, seq,dt["video_tensor"], event_boxes=query_event_boxes(event_boxes, feat_bigids) if event_boxes is not None else None, video_mask=dt["video_mask"])
                     cap_prob_eval = cap_head_output.logits
                     cap_loss=cap_head_output.loss
                     # if len(seq):
@@ -1238,7 +1254,7 @@ class CM2(nn.Module):
         loss_caption = loss_caption.reshape(-1, N_q, max(cap_id) + 1)
         return cost_caption, loss_caption, cap_probs, seq
     
-    def caption_prediction_eval(self, cap_head, dt, hs, reference, others, decoder_type, indices=None):
+    def caption_prediction_eval(self, cap_head, dt, hs, reference, others, decoder_type, indices=None, event_boxes=None):
         assert indices == None
 
         N_, N_q, C = hs.shape
@@ -1286,7 +1302,8 @@ class CM2(nn.Module):
         elif decoder_type in ['gpt2']:
             assert N_ == 1, 'only support batchsize > 1'
             with torch.no_grad():
-                g_out= cap_head.generate(hs.permute(1,0,2), reference, others,dt["video_tensor"])
+                g_out= cap_head.generate(hs.permute(1,0,2), reference, others,dt["video_tensor"],
+                    event_boxes=event_boxes[0] if event_boxes is not None else None, video_mask=dt['video_mask'])
                 seq=g_out["sequences"]
                 g_score=g_out["sequences_scores"]
                 # no use
