@@ -134,15 +134,26 @@ def save_dvc_json(out_json, path):
         out_json['avg_proposal_num'] = np.array([len(v) for v in out_json['results'].values()]).mean().item()
         json.dump(out_json, f)
 
-def reranking(p_src, alpha, cl_score_weight, temperature, fix_topN=-1, increase_num=0):
+def reranking(p_src, alpha, cl_score_weight, temperature, fix_topN=-1, increase_num=0, quality_weight=0.0):
 
-    print('alpha: {}, temp: {}'.format(alpha, temperature))
+    if quality_weight < 0 or not math.isfinite(quality_weight):
+        raise ValueError('quality_weight must be finite and nonnegative')
+    print('alpha: {}, temp: {}, quality weight: {}'.format(alpha, temperature, quality_weight))
     d = json.load(open(p_src))
     d_items = list(d['results'].items())
+    d['ranking'] = {'alpha': alpha, 'temperature': temperature, 'quality_weight': quality_weight,
+                    'formula': 'alpha * sentence_score / (word_count**temperature + 1e-5) + proposal_score * quality_score**quality_weight'}
     for k,v in d_items:
+        if not v:
+            continue
         if True:
             sent_scores = [p['sentence_score'] / (float(len(p['sentence'].split()))**(temperature) + 1e-5) for p in v]
-            prop_score = [p['proposal_score'] for p in v]
+            prop_score = np.array([p['proposal_score'] for p in v])
+            if quality_weight:
+                quality = np.array([p['quality_score'] for p in v], dtype=float)
+                if not np.isfinite(quality).all() or (quality < 0).any() or (quality > 1).any():
+                    raise ValueError('Quality scores must be finite and in [0, 1]')
+                prop_score = prop_score * quality ** quality_weight
             cl_score = [p['cl_score'] for p in v]
             joint_score = alpha * (np.array(sent_scores)) + (np.array(prop_score))
         for i,p in enumerate(v):
@@ -158,7 +169,8 @@ def reranking(p_src, alpha, cl_score_weight, temperature, fix_topN=-1, increase_
         v = v[:int(topN)]
         v = sorted(v, key=lambda x: x['timestamp'])
         d['results'][k] = v
-    save_path = p_src+'_rerank_alpha{}_temp{}.json'.format(alpha, temperature)
+    suffix = '_quality{}'.format(quality_weight) if quality_weight else ''
+    save_path = p_src+'_rerank_alpha{}_temp{}{}.json'.format(alpha, temperature, suffix)
     save_dvc_json(d, save_path)
     return save_path
 
@@ -225,6 +237,8 @@ def evaluate(model,memory_bank,criterion,contrastive_criterion, postprocessors, 
                         "label": results[idx]['labels'][pid].item(),
                         
                         "proposal_score": results[idx]['scores'][pid].item(),
+                        **({'quality_score': results[idx]['quality_scores'][pid].item()}
+                           if 'quality_scores' in results[idx] else {}),
                         "sentence": results[idx]['captions'][pid],
                         "sentence_score": results[idx]['caption_scores'][pid],
                         "cl_score": results[idx]['cl_scores'][pid],
@@ -265,7 +279,7 @@ def evaluate(model,memory_bank,criterion,contrastive_criterion, postprocessors, 
         logger.info('loss: {}'.format(loss_sum))
 
     if opt.count_loss_coef > 0:
-        metric_json_path = reranking(raw_dvc_json_path, alpha=alpha, cl_score_weight=opt.eval_matching_score_weight, temperature=2.0)
+        metric_json_path = reranking(raw_dvc_json_path, alpha=alpha, cl_score_weight=opt.eval_matching_score_weight, temperature=2.0, quality_weight=getattr(opt, 'quality_rank_weight', 0.0))
     save_dvc_json(out_json_g, dvc_json_path + '.grounding.json')
     save_dvc_json(aux_out_json_g, dvc_json_path + '_aux.grounding.json')
     skip_lang_eval = skip_lang_eval or vars(opt).get('eval_disable_captioning', False)

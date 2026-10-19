@@ -235,7 +235,16 @@ def train(opt):
             
             final_loss = sum(loss[k] * weight_dict[k] for k in loss.keys() if k in weight_dict)
             final_loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), opt.grad_clip)
+            if getattr(opt, 'localization_quality', False):
+                # The detached auxiliary head must not change the clipping
+                # scale of original DDVC gradients.
+                base_params, quality_params = [], []
+                for name, parameter in model.named_parameters():
+                    (quality_params if name.startswith('quality_head.') else base_params).append(parameter)
+                torch.nn.utils.clip_grad_norm_(base_params, opt.grad_clip)
+                torch.nn.utils.clip_grad_norm_(quality_params, opt.grad_clip)
+            else:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), opt.grad_clip)
 
             optimizer.step()
 

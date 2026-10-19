@@ -135,6 +135,11 @@ def parse_opts():
     parser.add_argument('--layer_norm_eps', type=float, default=1e-12)
     parser.add_argument('--caption_cost_type', type=str, default='loss')
     parser.add_argument('--caption_cost_chunk_size', type=int, default=16)
+    parser.add_argument('--localization_quality', action='store_true', default=False)
+    parser.add_argument('--quality_bins', type=int, default=8)
+    parser.add_argument('--quality_loss_coef', type=float, default=1.0)
+    parser.add_argument('--quality_rank_weight', type=float, default=0.0,
+                        help='proposal_score * quality_score**weight; 0 restores original ranking')
     parser.add_argument('--local_visual_attention', action='store_true', default=False,
                         help='Caption each event using its predicted temporal interval')
     parser.add_argument('--local_visual_context_ratio', type=float, default=0.1,

@@ -19,6 +19,7 @@ import clip
 from misc.detr_utils import box_ops
 from misc.detr_utils.misc import (inverse_sigmoid)
 
+from .localization_quality import LocalizationQualityHead, quality_loss
 from .matcher import build_matcher_cl
 
 from .deformable_transformer import build_deforamble_transformer
@@ -229,6 +230,13 @@ class CM2(nn.Module):
             self.bbox_head = nn.ModuleList([self.bbox_head for _ in range(num_pred)])
             self.transformer.decoder.bbox_head = None
 
+        self.quality_head = None
+        if getattr(opt, 'localization_quality', False):
+            # Keep the original model's RNG sequence identical to head-off mode.
+            with torch.random.fork_rng(devices=[]):
+                torch.default_generator.manual_seed(1729)
+                self.quality_head = LocalizationQualityHead(hidden_dim, opt.feature_dim,
+                                                          bins=opt.quality_bins)
         self.translator = translator
 
         self.disable_mid_caption_heads = opt.disable_mid_caption_heads
@@ -690,6 +698,11 @@ class CM2(nn.Module):
 
             # l_dict = {'loss_caption_cl': cl_loss[0],'loss_caption_cl_0': cl_loss[1]}
             # loss.update(l_dict)
+            if self.quality_head is not None:
+                out['pred_quality'] = self.quality_head(hs[-1], out['pred_boxes'],
+                                                         dt['video_tensor'], dt['video_mask'])
+                if not eval_mode:
+                    loss.update(quality_loss(out['pred_quality'], out['pred_boxes'], dt['video_target']))
             return out, loss
         else:
             return memory
@@ -1474,6 +1487,10 @@ class PostProcess(nn.Module):
             {'scores': s, 'labels': l, 'boxes': b, 'raw_boxes': b, 'captions': c, 'caption_scores': cs, 'cl_scores': cls,'query_id': qid,
              'vid_duration': ts, 'pred_seq_len': sl, 'raw_idx': idx} for s, l, b, rb, c, cs, cls, qid, ts, sl, idx in
             zip(scores, labels, boxes, raw_boxes, caps, cap_scores, cl_scores, topk_boxes, target_sizes, eseq_lens, topk_indexes)]
+        if 'pred_quality' in outputs:
+            aligned_quality = torch.gather(outputs['pred_quality'], 1, topk_boxes)
+            for batch, result in enumerate(results):
+                result['quality_scores'] = aligned_quality[batch]
         return results
 
 class PositionalEncoding(nn.Module):
@@ -1509,6 +1526,10 @@ class MLP(nn.Module):
 
 
 def build(args):
+    if getattr(args, 'quality_rank_weight', 0.0) > 0 and not getattr(args, 'localization_quality', False):
+        raise ValueError('Positive quality_rank_weight requires localization_quality')
+    if getattr(args, 'localization_quality', False) and args.quality_loss_coef <= 0:
+        raise ValueError('quality_loss_coef must be positive when training a quality head')
     device = torch.device(args.device)
     base_encoder = build_base_encoder(args)
     clip_model, feature_extractor=None,None
@@ -1546,6 +1567,8 @@ def build(args):
         for i in range(args.dec_layers - 1):
             aux_weight_dict.update({k + f'_{i}': v for k, v in weight_dict.items()})
         weight_dict.update(aux_weight_dict)
+    if getattr(args, 'localization_quality', False):
+        weight_dict['loss_quality'] = args.quality_loss_coef
     losses = ['labels', 'boxes', 'cardinality']
 
     criterion = SetCriterion_cl(args.num_classes, matcher, weight_dict, losses, focal_alpha=args.focal_alpha,
