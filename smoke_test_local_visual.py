@@ -27,6 +27,7 @@ def main():
         spec.loader.exec_module(module)
         return module
     masks = read_module('local_visual')
+    learned_masks = read_module('proposal_mask')
     caption_type = read_module('gpt2').GPT2CaptionModel
     torch.manual_seed(777)
     boxes = torch.tensor([[[0.2, 0.2], [0.8, 0.2]]])
@@ -98,7 +99,9 @@ def main():
         value = value.clamp(0, 1)
         return torch.log(value.clamp_min(1e-5) / (1-value).clamp_min(1e-5))
     scope = dict(torch=torch, inverse_sigmoid=inverse_sigmoid,
-                 CrossEntropyLoss=nn.CrossEntropyLoss, query_event_boxes=masks.query_event_boxes)
+                 CrossEntropyLoss=nn.CrossEntropyLoss, query_event_boxes=masks.query_event_boxes,
+                 proposal_confidence=learned_masks.proposal_confidence,
+                 proposal_anchors=learned_masks.proposal_anchors)
     exec(compile(ast.Module(body=methods, type_ignores=[]), str(model_file), 'exec'), scope)
     center_reference = torch.tensor([[[0.2], [0.8]]])
     decoded = scope['decode_event_boxes'](torch.zeros(1, 2, 2), center_reference)

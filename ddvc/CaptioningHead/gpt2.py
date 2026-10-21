@@ -21,6 +21,7 @@ import torch
 import torch.nn as nn
 from transformers import  GPT2Config, GPT2Model, GPT2Tokenizer, GPT2LMHeadModel
 from .local_visual import event_visual_mask
+from .proposal_mask import LearnedGatedProposalMask
 
 class GPT2CaptionModel(nn.Module):
     def __init__(self, opt):
@@ -28,6 +29,8 @@ class GPT2CaptionModel(nn.Module):
         self.opt = opt
         if getattr(opt, 'local_visual_attention', False) and not opt.add_cross_attention:
             raise ValueError('local_visual_attention requires add_cross_attention=True')
+        if getattr(opt, 'learned_proposal_mask', False) and (not opt.add_cross_attention or getattr(opt, 'local_visual_attention', False)):
+            raise ValueError('learned_proposal_mask requires cross attention and local_visual_attention=False')
         # prefix mlp
         self.fc1 = nn.Linear(self.opt.hidden_dim, self.opt.hidden_dim*2)
         self.fc2 = nn.Linear(self.opt.hidden_dim*2, 768)
@@ -37,6 +40,11 @@ class GPT2CaptionModel(nn.Module):
         configuration = GPT2Config(n_layer=self.opt.gpt_layer,add_cross_attention=self.opt.add_cross_attention)
 
         self.model = GPT2LMHeadModel(configuration)
+        self.proposal_mask = None
+        if getattr(opt, 'learned_proposal_mask', False):
+            with torch.random.fork_rng(devices=[]):
+                torch.default_generator.manual_seed(1731)
+                self.proposal_mask = LearnedGatedProposalMask(opt.proposal_mask_bins, opt.proposal_mask_encoding_dim)
 
         self.prefix_token=self.tokenizer("<|endoftext|>",return_tensors="pt")["input_ids"].to(opt.device)
 
@@ -47,14 +55,22 @@ class GPT2CaptionModel(nn.Module):
         return prefix_emb
 
 
-    def visual_context(self, hs, clip_frame_feature, event_boxes=None, video_mask=None):
+    def visual_context(self, hs, clip_frame_feature, event_boxes=None, video_mask=None, event_scores=None, anchor_boxes=None):
         if clip_frame_feature.shape[0] != 1:
             raise ValueError('DDVC caption head currently requires batch_size=1')
         # The vendored GPT-2 Conv1D uses view(), so it needs contiguous input.
         cross_emb = clip_frame_feature.repeat(hs.shape[0], 1, 1).detach()
         if video_mask is None:
             video_mask = torch.ones(1, cross_emb.shape[1], device=cross_emb.device, dtype=torch.bool)
-        if getattr(self.opt, 'local_visual_attention', False):
+        if getattr(self.opt, 'learned_proposal_mask', False):
+            if event_boxes is None or len(event_boxes) != hs.shape[0]:
+                raise ValueError('Learned masks need one interval per caption query')
+            details = self.proposal_mask(event_boxes, video_mask, event_scores, anchor_boxes)
+            # Detach frozen CLIP features BEFORE gating, so caption gradients
+            # still reach the learned mask, predicted interval and event score.
+            cross_emb = (cross_emb * details['weights'].unsqueeze(-1)).contiguous()
+            mask = video_mask.to(device=cross_emb.device, dtype=torch.bool).expand(hs.shape[0], -1)
+        elif getattr(self.opt, 'local_visual_attention', False):
             if event_boxes is None or len(event_boxes) != hs.shape[0]:
                 raise ValueError('Each caption query needs its own predicted interval')
             mask = event_visual_mask(event_boxes, video_mask,
@@ -65,7 +81,7 @@ class GPT2CaptionModel(nn.Module):
         return cross_emb, mask
 
     def forward(self, hs, cap_label, cap_mask ,others, cap_tensor, clip_fram_feature,get_loss=True,
-                event_boxes=None, video_mask=None):
+                event_boxes=None, video_mask=None, event_scores=None, anchor_boxes=None):
         prefix_emb = self.relu(self.fc1(hs))
         prefix_emb = self.fc2(prefix_emb)
         input_emb=self.model.transformer.wte(cap_label)
@@ -76,14 +92,14 @@ class GPT2CaptionModel(nn.Module):
             else:
                 output=self.model(inputs_embeds=input_emb,attention_mask=cap_mask)
         else:
-            cross_emb, cross_mask = self.visual_context(hs, clip_fram_feature, event_boxes, video_mask)
+            cross_emb, cross_mask = self.visual_context(hs, clip_fram_feature, event_boxes, video_mask, event_scores, anchor_boxes)
             if get_loss:
                 output=self.model(inputs_embeds=input_emb,attention_mask=cap_mask,labels=cap_label, encoder_hidden_states=cross_emb, encoder_attention_mask=cross_mask)
             else:
               output=self.model(inputs_embeds=input_emb,attention_mask=cap_mask,encoder_hidden_states=cross_emb, encoder_attention_mask=cross_mask)
         return output
 
-    def generate(self,hs, reference, others, clip_fram_feature, event_boxes=None, video_mask=None):
+    def generate(self,hs, reference, others, clip_fram_feature, event_boxes=None, video_mask=None, event_scores=None, anchor_boxes=None):
         with torch.no_grad():
             prefix_emb = self.relu(self.fc1(hs))
             prefix_emb = self.fc2(prefix_emb)
@@ -95,7 +111,7 @@ class GPT2CaptionModel(nn.Module):
                 output = self.model.generate(inputs_embeds=input_emb,attention_mask=attention_mask,eos_token_id=self.tokenizer.encode(".")[0],pad_token_id=self.tokenizer.pad_token_id,
                                                 max_length=self.opt.max_caption_len, do_sample=False, num_beams=self.opt.gpt_beam_size,  return_dict_in_generate=True,  output_scores=True)
             else:
-                cross_emb, cross_mask = self.visual_context(hs, clip_fram_feature, event_boxes, video_mask)
+                cross_emb, cross_mask = self.visual_context(hs, clip_fram_feature, event_boxes, video_mask, event_scores, anchor_boxes)
                 output = self.model.generate(inputs_embeds=input_emb,attention_mask=attention_mask,eos_token_id=self.tokenizer.encode(".")[0],pad_token_id=self.tokenizer.pad_token_id,encoder_hidden_states=cross_emb,
                                                 encoder_attention_mask=cross_mask,
                                                 max_length=self.opt.max_caption_len, do_sample=False, num_beams=self.opt.gpt_beam_size,  return_dict_in_generate=True,  output_scores=True)

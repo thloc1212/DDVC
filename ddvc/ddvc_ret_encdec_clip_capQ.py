@@ -24,6 +24,7 @@ from .matcher import build_matcher_cl
 from .deformable_transformer import build_deforamble_transformer
 from ddvc.CaptioningHead import build_captioner
 from ddvc.CaptioningHead.local_visual import query_event_boxes
+from ddvc.CaptioningHead.proposal_mask import proposal_confidence, proposal_anchors, mask_layer_context
 import copy
 from .criterion import SetCriterion_cl, ContrastiveCriterion
 from misc.utils import decide_two_stage
@@ -690,6 +691,11 @@ class CM2(nn.Module):
 
             # l_dict = {'loss_caption_cl': cl_loss[0],'loss_caption_cl_0': cl_loss[1]}
             # loss.update(l_dict)
+            if getattr(self.opt, 'learned_proposal_mask', False):
+                last_reference = init_reference if hs.shape[0] == 1 else inter_references[hs.shape[0]-2]
+                context = mask_layer_context(others, out['pred_logits'], last_reference, out['pred_boxes'])
+                loss.update(self.caption_head[-1].proposal_mask.objective(
+                    out['pred_boxes'][0], dt['video_mask'], proposal_confidence(context), proposal_anchors(context)))
             return out, loss
         else:
             return memory
@@ -844,12 +850,13 @@ class CM2(nn.Module):
 
             # if self.opt.disable_mid_caption_heads and (l_id != hs.shape[0] - 1):
             outputs_coord = self.decode_event_boxes(tmp, reference, disable_iterative_refine)
+            mask_others = mask_layer_context(others, outputs_class, reference, outputs_coord)
             if l_id != hs.shape[0] - 1:
                 cap_probs, seq = self.caption_prediction_eval(
-                    self.caption_head[l_id], dt, hs_lid_cap, reference, others, 'none')
+                    self.caption_head[l_id], dt, hs_lid_cap, reference, mask_others, 'none')
             else:
                 cap_probs, seq = self.caption_prediction_eval(
-                    self.caption_head[l_id], dt, hs_lid_cap, reference, others, self.opt.caption_decoder_type,
+                    self.caption_head[l_id], dt, hs_lid_cap, reference, mask_others, self.opt.caption_decoder_type,
                     event_boxes=outputs_coord)
 
             
@@ -912,9 +919,10 @@ class CM2(nn.Module):
             query_idxs=torch.arange(0, query_len).repeat_interleave(timestamp_len)
             seq_idxs = torch.arange(0, timestamp_len).repeat(query_len) # 包括 0 到 n 的整数
             outputs_coord = self.decode_event_boxes(tmp, reference, disable_iterative_refine)
+            mask_others = mask_layer_context(others, outputs_class, reference, outputs_coord)
             with torch.no_grad():
                 cost_caption, loss_caption, cap_probs, seq = self.caption_prediction_no_grad(self.caption_head[l_id], dt, hs_lid_cap,
-                                                                                    reference, others, self.opt.caption_decoder_type,[(query_idxs,seq_idxs)],
+                                                                                    reference, mask_others, self.opt.caption_decoder_type,[(query_idxs,seq_idxs)],
                                                                                     event_boxes=outputs_coord)
             # cost_caption, loss_caption, cap_probs, seq = self.caption_prediction(self.caption_head[l_id], dt, hs_lid_cap,
             #                                                                      reference, others, "none")
@@ -956,8 +964,9 @@ class CM2(nn.Module):
                 hs_lid_cap = hs_cap[l_id]
                 reference = init_reference if l_id == 0 else inter_references[l_id - 1]
                 indices = last_indices[0] if l_id == hs.shape[0] - 1 else aux_indices[l_id][0]
+                mask_others = mask_layer_context(others, outputs_classes[l_id], reference, outputs_coords[l_id])
                 cap_loss, cap_probs, seq, cap_cl_loss = self.caption_prediction(self.caption_head[l_id], dt, hs_lid_cap, reference,
-                                                                   others, self.opt.caption_decoder_type, indices,
+                                                                   mask_others, self.opt.caption_decoder_type, indices,
                                                                    event_boxes=outputs_coords[l_id])
                 # cap_loss=out["caption_losses"][indices[0]].mean()
                 l_dict = {'loss_caption': cap_loss,"loss_caption_cl":cap_cl_loss}
@@ -1074,7 +1083,7 @@ class CM2(nn.Module):
             if self.training:
                 seq = dt['cap_tensor'][cap_bigids]
                 if self.opt.caption_cost_type != 'rl':
-                    cap_head_output=cap_head(hs[:, feat_bigids].permute(1,0,2), caption_tensor, caption_mask, others, seq,dt["video_tensor"], event_boxes=query_event_boxes(event_boxes, feat_bigids) if event_boxes is not None else None, video_mask=dt["video_mask"])
+                    cap_head_output=cap_head(hs[:, feat_bigids].permute(1,0,2), caption_tensor, caption_mask, others, seq,dt["video_tensor"], event_boxes=query_event_boxes(event_boxes, feat_bigids) if event_boxes is not None else None, video_mask=dt["video_mask"], event_scores=proposal_confidence(others, feat_bigids), anchor_boxes=proposal_anchors(others, feat_bigids))
                     cap_prob = cap_head_output.logits
                     cap_loss=cap_head_output.loss
                     cap_probs['cap_prob_train'] = cap_prob
@@ -1082,7 +1091,7 @@ class CM2(nn.Module):
 
             else:
                 with torch.no_grad():
-                    cap_head_output=cap_head(hs[:, feat_bigids].permute(1,0,2), caption_tensor, caption_mask, others, seq,dt["video_tensor"], event_boxes=query_event_boxes(event_boxes, feat_bigids) if event_boxes is not None else None, video_mask=dt["video_mask"])
+                    cap_head_output=cap_head(hs[:, feat_bigids].permute(1,0,2), caption_tensor, caption_mask, others, seq,dt["video_tensor"], event_boxes=query_event_boxes(event_boxes, feat_bigids) if event_boxes is not None else None, video_mask=dt["video_mask"], event_scores=proposal_confidence(others, feat_bigids), anchor_boxes=proposal_anchors(others, feat_bigids))
                     cap_prob_eval = cap_head_output.logits
                     cap_loss=cap_head_output.loss
                     # if len(seq):
@@ -1197,7 +1206,7 @@ class CM2(nn.Module):
                             labels_chunk, mask_chunk, others, labels_chunk,
                             dt["video_tensor"], get_loss=False,
                             event_boxes=query_event_boxes(event_boxes, feat_bigids[pair_start:pair_end]) if event_boxes is not None else None,
-                            video_mask=dt['video_mask'])
+                            video_mask=dt['video_mask'], event_scores=proposal_confidence(others, feat_bigids[pair_start:pair_end]), anchor_boxes=proposal_anchors(others, feat_bigids[pair_start:pair_end]))
                         shift_logits = chunk_output.logits[..., :-1, :].contiguous()
                         shift_labels = labels_chunk[..., 1:].contiguous().clone()
 
@@ -1224,7 +1233,7 @@ class CM2(nn.Module):
 
             else:
                 with torch.no_grad():
-                    cap_head_output=cap_head(hs[:, feat_bigids].permute(1,0,2), caption_tensor, caption_mask, others, seq,dt["video_tensor"], event_boxes=query_event_boxes(event_boxes, feat_bigids) if event_boxes is not None else None, video_mask=dt["video_mask"])
+                    cap_head_output=cap_head(hs[:, feat_bigids].permute(1,0,2), caption_tensor, caption_mask, others, seq,dt["video_tensor"], event_boxes=query_event_boxes(event_boxes, feat_bigids) if event_boxes is not None else None, video_mask=dt["video_mask"], event_scores=proposal_confidence(others, feat_bigids), anchor_boxes=proposal_anchors(others, feat_bigids))
                     cap_prob_eval = cap_head_output.logits
                     cap_loss=cap_head_output.loss
                     # if len(seq):
@@ -1303,7 +1312,7 @@ class CM2(nn.Module):
             assert N_ == 1, 'only support batchsize > 1'
             with torch.no_grad():
                 g_out= cap_head.generate(hs.permute(1,0,2), reference, others,dt["video_tensor"],
-                    event_boxes=event_boxes[0] if event_boxes is not None else None, video_mask=dt['video_mask'])
+                    event_boxes=event_boxes[0] if event_boxes is not None else None, video_mask=dt['video_mask'], event_scores=proposal_confidence(others), anchor_boxes=proposal_anchors(others))
                 seq=g_out["sequences"]
                 g_score=g_out["sequences_scores"]
                 # no use
@@ -1509,6 +1518,8 @@ class MLP(nn.Module):
 
 
 def build(args):
+    if getattr(args, 'learned_proposal_mask', False) and args.proposal_mask_loss_coef < 0:
+        raise ValueError('proposal_mask_loss_coef must be nonnegative')
     device = torch.device(args.device)
     base_encoder = build_base_encoder(args)
     clip_model, feature_extractor=None,None
@@ -1546,6 +1557,8 @@ def build(args):
         for i in range(args.dec_layers - 1):
             aux_weight_dict.update({k + f'_{i}': v for k, v in weight_dict.items()})
         weight_dict.update(aux_weight_dict)
+    if getattr(args, 'learned_proposal_mask', False):
+        weight_dict['loss_proposal_mask'] = args.proposal_mask_loss_coef
     losses = ['labels', 'boxes', 'cardinality']
 
     criterion = SetCriterion_cl(args.num_classes, matcher, weight_dict, losses, focal_alpha=args.focal_alpha,
