@@ -35,8 +35,11 @@ def cccl_include_dirs(cuda_home):
                 candidates.append(os.path.dirname(os.path.dirname(str(dist.locate_file(entry)))))
     except importlib.metadata.PackageNotFoundError:
         pass
-    return list(dict.fromkeys(path for path in candidates
-                             if os.path.isfile(os.path.join(path, "nv", "target"))))
+    # Choose one header tree; mixing minor versions can fail CCCL compatibility checks.
+    for path in candidates:
+        if os.path.isfile(os.path.join(path, "nv", "target")):
+            return [path]
+    return []
 
 def get_extensions():
     this_dir = os.path.dirname(os.path.abspath(__file__))
