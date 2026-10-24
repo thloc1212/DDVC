@@ -64,7 +64,11 @@ def validate_resume(config, previous):
             'mask_gate_min', 'mask_gate_max', 'mask_context_ratio', 'mask_min_frames',
             'mask_prune_threshold', 'mask_balanced_bce', 'proposal_mask_loss_coef',
             'corrected_query_contrastive', 'seed', 'epoch', 'lr', 'optimizer_type',
-            'weight_decay', 'contrastive_loss_temperature', 'data_signature')
+            'weight_decay', 'contrastive_loss_temperature', 'data_signature',
+            'learning_rate_decay_start', 'learning_rate_decay_every', 'learning_rate_decay_rate',
+            'cl_schedule_time', 'cl_schedule_val', 'cls_loss_coef', 'giou_loss_coef',
+            'bbox_loss_coef', 'count_loss_coef', 'caption_loss_coef', 'loss_caption_cl',
+            'contrastive_loss_coef', 'caption_cost_chunk_size')
     changed = [k for k in keys if k in previous and config.get(k) != previous[k]]
     if changed:
         raise ValueError('Resume recipe differs for: ' + ', '.join(changed) + '. Start a new run instead.')
