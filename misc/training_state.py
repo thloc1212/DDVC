@@ -2,9 +2,29 @@
 import json
 import os
 import random
+from collections.abc import Mapping
 from pathlib import Path
 import numpy as np
 import torch
+
+
+def plain_metadata(value):
+    """Remove evaluator defaultdict factories from metadata, not model/optimizer state."""
+    if isinstance(value, Mapping):
+        return {key: plain_metadata(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [plain_metadata(item) for item in value]
+    if isinstance(value, np.generic):
+        return plain_metadata(value.item())
+    if isinstance(value, np.ndarray):
+        return plain_metadata(value.tolist())
+    if isinstance(value, torch.Tensor):
+        return plain_metadata(value.detach().cpu().tolist())
+    if isinstance(value, Path):
+        return str(value)
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    raise TypeError('Unsupported checkpoint metadata type: ' + type(value).__name__)
 
 
 def atomic_save(payload, path, json_file=False):
@@ -12,7 +32,7 @@ def atomic_save(payload, path, json_file=False):
     temporary = path.with_name(path.name + '.tmp')
     try:
         if json_file:
-            temporary.write_text(json.dumps(payload), encoding='utf-8')
+            temporary.write_text(json.dumps(plain_metadata(payload)), encoding='utf-8')
         else:
             torch.save(payload, temporary)
         os.replace(temporary, path)
@@ -53,7 +73,8 @@ def snapshot(model, optimizer, scheduler, epoch, iteration, info, config, phase)
     return dict(format_version=2, epoch=epoch,
                 next_epoch=epoch + (phase == 'epoch_complete'), phase=phase,
                 iteration=iteration, model=model.state_dict(), optimizer=optimizer.state_dict(),
-                scheduler=scheduler.state_dict(), rng=capture_rng(), info=info, config=dict(config))
+                scheduler=scheduler.state_dict(), rng=capture_rng(),
+                info=plain_metadata(info), config=plain_metadata(config))
 
 
 def validate_resume(config, previous):

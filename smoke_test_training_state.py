@@ -18,7 +18,7 @@ from torch import nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from misc.training_state import (atomic_save, capture_rng, restore_rng, snapshot,
-                                 schedule_contrastive, validate_resume)
+                                 schedule_contrastive, validate_resume, plain_metadata)
 
 
 def main():
@@ -51,7 +51,9 @@ def main():
         value=float(torch.rand(()))+random.random()+float(np.random.rand())
         evaluations.append(value)
         if fail[0] and len(evaluations)==2:raise RuntimeError('simulated validation interruption')
-        return dict(METEOR=value,soda_c=value,CIDEr=value,Precision=.3,Recall=.2,avg_proposal_number=2),{}
+        # Real eval_metrics returns a local-lambda defaultdict, not a plain dict.
+        return collections.defaultdict(lambda:-1, METEOR=value,soda_c=value,CIDEr=value,
+                                       Precision=.3,Recall=.2,avg_proposal_number=2),{}
     def seed(n):torch.manual_seed(n);random.seed(n);np.random.seed(n)
     def folder(opt):
         p=Path(opt.save_dir)/(opt.start_from or opt.id);p.mkdir(parents=True,exist_ok=True);return str(p)
@@ -76,6 +78,17 @@ def main():
         namespace['train'](full)
         expected=torch.load(Path(full.save_dir)/'run/model-last.pth',weights_only=False)
         assert expected['next_epoch']==3 and expected['phase']=='epoch_complete' and len(steps)==6
+        score=expected['info']['history']['val_result_history'][0]['eval_score']
+        assert type(score) is dict and score['CIDEr']==score['METEOR']
+        nested=collections.defaultdict(lambda:None, a=collections.defaultdict(lambda:-1,b=np.float32(.5)))
+        assert plain_metadata(nested)=={'a':{'b':.5}}
+        # A failed serializer must preserve the last usable checkpoint and remove its temp file.
+        protected=Path(full.save_dir)/'run/model-last.pth'
+        original=protected.read_bytes()
+        try:atomic_save({'bad':lambda:0},protected)
+        except (AttributeError,TypeError):pass
+        else:raise AssertionError('Non-pickleable fixture should fail')
+        assert protected.read_bytes()==original and not protected.with_name(protected.name+'.tmp').exists()
         steps.clear();evaluations.clear();fail[0]=True
         interrupted=SimpleNamespace(**defaults,save_dir=str(Path(tmp)/'interrupted'))
         try:namespace['train'](interrupted)
@@ -96,7 +109,7 @@ def main():
         state=capture_rng();wanted=(random.random(),np.random.rand(),torch.rand(()))
         restore_rng(state);got=(random.random(),np.random.rand(),torch.rand(()))
         assert wanted[0]==got[0] and wanted[1]==got[1] and wanted[2]==got[2]
-    print('PASS: actual train loop, 2-batch logging, interruption during validation, atomic self-contained resume, no repeated epoch, exact model/scheduler/RNG continuity')
+    print('PASS: actual train loop with evaluator lambda-defaultdict metrics, nested metadata, failed-save protection, validation interruption/resume, no repeated epoch, exact model/scheduler/RNG continuity')
 
 
 if __name__=='__main__':main()
