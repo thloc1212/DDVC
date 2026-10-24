@@ -4,7 +4,7 @@ import yaml
 import os
 import numpy as np
 
-def parse_opts():
+def parse_opts(argv=None, write_options=True):
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--able_ret",type=bool, default=True,help="if true, retrieval")
@@ -393,7 +393,7 @@ def parse_opts():
     
 
     # reranking
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.cfg_path:
         import_cfg(args.cfg_path, vars(args))
@@ -420,7 +420,8 @@ def parse_opts():
         assert args.set_cost_caption == 0
 
     print("args.id: {}".format(args.id))
-    export_to_json(args)
+    if write_options:
+        export_to_json(args)
     return args
 
 def import_cfg(cfg_path, args):

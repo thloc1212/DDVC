@@ -118,11 +118,18 @@ def restage(args):
 
 def smoke(args):
     import torch,yaml
-    from types import SimpleNamespace
+    from opts import parse_opts
     from torch.utils.data import DataLoader
     from train import build,PropSeqDataset,collate_fn,load_clip_memory_bank,load_clip_gt
     from misc.training_state import schedule_contrastive,validate_resume
-    opt=SimpleNamespace(**yaml.safe_load(Path(args.config).read_text()));opt.rec_encdec=True
+    # Follow train.py: parser defaults first, then YAML overrides. opts.json is historical
+    # and intentionally does not contain every option added to the current source.
+    opt=parse_opts(['--cfg_path',str(Path(args.config).resolve())],write_options=False)
+    if not opt.text_crossAttn:opt.cap_num_feature_levels=4
+    if opt.combined_encoder:opt.cap_num_feature_levels=5
+    if opt.feature_dim==512 and opt.decoder_query_ablation:opt.num_queries=opt.decoder_query_num
+    if opt.caption_decoder_new=='gpt2':opt.caption_decoder_type='gpt2'
+    opt.rec_encdec=True
     if not torch.cuda.is_available():raise RuntimeError('CUDA unavailable')
     ds=PropSeqDataset(opt.train_caption_file,opt.visual_feature_folder,opt.dict_file,True,'gt',opt)
     from misc.runtime_perf import configure_runtime,amp_context,vram_metrics
