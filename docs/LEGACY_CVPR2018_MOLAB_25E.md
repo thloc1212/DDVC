@@ -96,6 +96,12 @@ Phải có `LEGACY_PACKAGE_OK`. Mỗi bản ZIP tương lai nên có tên phiên
 
 ## 5. Setup thư viện và CUDA — terminal
 
+Nếu dùng ZIP source c385e66 đã upload, chuẩn hoá launcher từ CRLF về LF trước (không đổi code hay recipe):
+
+```bash
+/tmp/uv-venv/bin/python -c 'from pathlib import Path; p=Path("/marimo/DDVC_CVPR2018_Molab/source/tools/legacy_molab.sh"); p.write_bytes(p.read_bytes().replace(b"\r\n",b"\n")); print("LAUNCHER_LF_OK")'
+```
+
 ```bash
 bash /marimo/DDVC_CVPR2018_Molab/source/tools/legacy_molab.sh setup
 ```
