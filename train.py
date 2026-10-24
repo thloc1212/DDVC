@@ -6,7 +6,7 @@ from __future__ import print_function
 
 
 import sys
-sys.path.insert(0, "/disk1_2t/DDVC_GPT2@2")
+
 import os
 import json
 import time
@@ -32,6 +32,8 @@ from data.video_dataset import PropSeqDataset, collate_fn
 from ddvc.ddvc_ret_encdec_clip_capQ import build
 from collections import OrderedDict
 from ret_utils import load_clip_memory_bank, load_clip_gt
+from misc.training_state import (atomic_save, capture_rng, restore_rng, snapshot,
+                                 schedule_contrastive, validate_resume)
 
 # global clip_gt
 def train(opt):
@@ -57,22 +59,19 @@ def train(opt):
 
     saved_info = {'best': {}, 'last': {}, 'history': {}, 'eval_history': {}}
 
-    # continue training
+    model_pth = None
+    resume_pending_validation = False
     if opt.start_from:
         opt.pretrain = False
-        infos_path = os.path.join(save_folder, 'info.json')
-        with open(infos_path) as f:
-            logger.info('Load info from {}'.format(infos_path))
-            saved_info = json.load(f)
-            prev_opt = saved_info[opt.start_from_mode[:4]]['opt']
-
-            exclude_opt = ['start_from', 'start_from_mode', 'pretrain']
-            for opt_name in prev_opt.keys():
-                if opt_name not in exclude_opt:
-                    vars(opt).update({opt_name: prev_opt.get(opt_name)})
-                if prev_opt.get(opt_name) != vars(opt).get(opt_name):
-                    logger.info('Change opt {} : {} --> {}'.format(opt_name, prev_opt.get(opt_name),
-                                                                   vars(opt).get(opt_name)))
+        filename = 'model-best.pth' if opt.start_from_mode == 'best' else 'model-last.pth'
+        # Load only trusted experiment checkpoints; format 2 contains Python/NumPy RNG state.
+        model_pth = torch.load(os.path.join(save_folder, filename), map_location='cpu', weights_only=False)
+        if model_pth.get('format_version') != 2:
+            raise ValueError('Legacy checkpoint lacks a consistent scheduler/RNG boundary. Use a new run or an explicit migration; do not silently resume it.')
+        validate_resume(vars(opt), model_pth['config'])
+        saved_info = model_pth['info']
+        resume_pending_validation = model_pth['phase'] == 'validation_pending'
+        logger.info('Restore checkpoint phase %s, next epoch %s', model_pth['phase'], model_pth['next_epoch'])
 
     train_dataset = PropSeqDataset(opt.train_caption_file,
                                    opt.visual_feature_folder,
@@ -90,9 +89,9 @@ def train(opt):
     val_loader = DataLoader(val_dataset, batch_size=opt.batch_size_for_eval,
                             shuffle=False, num_workers=opt.nthreads, collate_fn=collate_fn)
 
-    epoch = saved_info[opt.start_from_mode[:4]].get('epoch', 0)
-    iteration = saved_info[opt.start_from_mode[:4]].get('iter', 0)
-    best_val_score = saved_info[opt.start_from_mode[:4]].get('best_val_score', -1e5)
+    epoch = model_pth['next_epoch'] if model_pth else 0
+    iteration = model_pth['iteration'] if model_pth else 0
+    best_val_score = saved_info.get('best', {}).get('best_val_score', -1e5)
     val_result_history = saved_info['history'].get('val_result_history', {})
     loss_history = saved_info['history'].get('loss_history', {})
     lr_history = saved_info['history'].get('lr_history', {})
@@ -105,29 +104,24 @@ def train(opt):
     model.train()
     # exit()
     # Recover the parameters
-    if opt.start_from and (not opt.pretrain):
-        if opt.start_from_mode == 'best':
-            model_pth = torch.load(os.path.join(save_folder, 'model-best.pth'))
-        elif opt.start_from_mode == 'last':
-            model_pth = torch.load(os.path.join(save_folder, 'model-last.pth'))
-        logger.info('Loading pth from {}, iteration:{}'.format(save_folder, iteration))
-        model.load_state_dict(model_pth['model'])
-    
+    if model_pth is not None:
+        model.load_state_dict(model_pth['model'], strict=True)
+
     # Load the pre-trained model
     if opt.pretrain and (not opt.start_from):
         logger.info('Load pre-trained parameters from {}'.format(opt.pretrain_path))
-        model_pth = torch.load(opt.pretrain_path, map_location=torch.device(opt.device))
+        pretrain_pth = torch.load(opt.pretrain_path, map_location=torch.device(opt.device))
         if opt.pretrain == 'encoder':
             encoder_filter = model.get_filter_rule_for_encoder()
-            encoder_pth = {k:v for k,v in model_pth['model'].items() if encoder_filter(k)}
+            encoder_pth = {k:v for k,v in pretrain_pth['model'].items() if encoder_filter(k)}
             model.load_state_dict(encoder_pth, strict=True)
         elif opt.pretrain == 'decoder':
             encoder_filter = model.get_filter_rule_for_encoder()
-            decoder_pth = {k:v for k,v in model_pth['model'].items() if not encoder_filter(k)}
+            decoder_pth = {k:v for k,v in pretrain_pth['model'].items() if not encoder_filter(k)}
             model.load_state_dict(decoder_pth, strict=True)
             pass
         elif opt.pretrain == 'full':
-            model.load_state_dict(model_pth['model'], strict=True)
+            model.load_state_dict(pretrain_pth['model'], strict=True)
         else:
             raise ValueError("wrong value of opt.pretrain")
 
@@ -141,18 +135,11 @@ def train(opt):
 
     milestone = [opt.learning_rate_decay_start + opt.learning_rate_decay_every * _ for _ in range(int((opt.epoch - opt.learning_rate_decay_start) / opt.learning_rate_decay_every))]
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestone, gamma=opt.learning_rate_decay_rate)
-    cl_schedule_time = opt.cl_schedule_time
-    cl_schedule_val = opt.cl_schedule_val
-    cl_weight = 0.0
-    # if start_from recover current cl weight
-    for i in range(1, len(cl_schedule_val)):
-        if epoch >= cl_schedule_time[i-1] and epoch < cl_schedule_time[i]:
-            cl_weight = cl_schedule_val[i-1]
-            break 
-
-    if opt.start_from:
+    cl_schedule_time, cl_schedule_val = opt.cl_schedule_time, opt.cl_schedule_val
+    if model_pth is not None:
         optimizer.load_state_dict(model_pth['optimizer'])
-        lr_scheduler.step(epoch-1)
+        lr_scheduler.load_state_dict(model_pth['scheduler'])
+    opt.current_lr = optimizer.param_groups[0]['lr']
 
     # print the args for debugging
     print_opt(opt, model, logger)
@@ -162,13 +149,6 @@ def train(opt):
     bad_video_num = 0
 
     start = time.time()
-    for key, val in criterion.weight_dict.items():
-        if 'contrastive_loss' in key:
-            criterion.weight_dict[key] = cl_weight
-            criterion.matcher.cost_cl = 0 if cl_weight == 0 else opt.set_cost_cl
-
-
-
     weight_dict = criterion.weight_dict
     logger.info('loss type: {}'.format(weight_dict.keys()))
     logger.info('loss weights: {}'.format(weight_dict.values()))
@@ -182,6 +162,12 @@ def train(opt):
     else:
         memory_bank=None        
     
+    if model_pth is not None:
+        restore_rng(model_pth['rng'])
+    if epoch >= opt.epoch and not resume_pending_validation:
+        logger.info('Requested training budget is already complete.')
+        return saved_info
+
     # Epoch-level iteration
     while True:
         # scheduled sampling rate update
@@ -192,15 +178,11 @@ def train(opt):
             model.caption_head.ss_prob = opt.ss_prob
 
         print('lr:{}'.format(float(opt.current_lr)))
-        if epoch in cl_schedule_time:
-            cl_weight = cl_schedule_val[cl_schedule_time.index(epoch)]
-            for key, val in weight_dict.items():
-                if 'contrastive_loss' in key:
-                    weight_dict[key] = cl_weight
-                    criterion.matcher.cost_cl = 0 if cl_weight == 0 else opt.set_cost_cl
-            logger.info('Update loss weight !')
-            logger.info('Loss type: {}'.format(weight_dict.keys()))
-            logger.info('Loss weights: {}'.format(weight_dict.values()))
+        cl_weight = schedule_contrastive(weight_dict, epoch, cl_schedule_time, cl_schedule_val,
+                                         corrected=getattr(opt, 'corrected_query_contrastive', False))
+        criterion.matcher.cost_cl = 0 if cl_weight == 0 else opt.set_cost_cl
+        logger.info('Epoch %s effective loss weights: %s', epoch, weight_dict)
+        saved_this_epoch, new_best = False, False
 
         if opt.save_mode:
             save_vid_features=[]
@@ -208,7 +190,7 @@ def train(opt):
 
         # opt.debug=True
         # Batch-level iteration
-        for dt in tqdm(train_loader, disable=opt.disable_tqdm):
+        for dt in tqdm([] if resume_pending_validation else train_loader, disable=opt.disable_tqdm):
             if opt.device=='cuda':
                 torch.cuda.synchronize(opt.device)
             if opt.debug:
@@ -246,7 +228,7 @@ def train(opt):
             if opt.device=='cuda':
                 torch.cuda.synchronize()
 
-            losses_log_every = int(len(train_loader) / 3)
+            losses_log_every = max(1, int(len(train_loader) / 3))
 
             if opt.debug:
                 losses_log_every = 6
@@ -275,16 +257,11 @@ def train(opt):
         if (epoch % opt.save_checkpoint_every == 0) and (epoch >= opt.min_epoch_when_save):
 
             # Save model
-            saved_pth = {'epoch': epoch,
-                         'model': model.state_dict(),
-                         'optimizer': optimizer.state_dict(), }
-
-            if opt.save_all_checkpoint:
-                checkpoint_path = os.path.join(save_folder, 'model_iter_{}.pth'.format(iteration))
-            else:
-                checkpoint_path = os.path.join(save_folder, 'model-last.pth')
-
-            torch.save(saved_pth, checkpoint_path)
+            saved_pth = snapshot(model, optimizer, lr_scheduler, epoch, iteration,
+                                 saved_info, vars(opt), 'validation_pending')
+            checkpoint_path = os.path.join(save_folder, 'model-last.pth')
+            atomic_save(saved_pth, checkpoint_path)
+            saved_this_epoch = True
 
             model.eval()
             result_json_path = os.path.join(save_folder, 'prediction',
@@ -333,7 +310,7 @@ def train(opt):
                                       }
 
                 # suffix = "RL" if sc_flag else "CE"
-                torch.save(saved_pth, os.path.join(save_folder, 'model-best.pth'))
+                new_best = True
                 logger.info('Save Best-model at iter {} to checkpoint file.'.format(iteration))
                 logger.info('Save Best-model at epoch {} to checkpoint file.'.format(epoch))
 
@@ -347,15 +324,25 @@ def train(opt):
                                      'lr_history': lr_history,
                                      # 'query_matched_fre_hist': query_matched_fre_hist,
                                      }
-            with open(os.path.join(save_folder, 'info.json'), 'w') as f:
-                json.dump(saved_info, f)
+            atomic_save(saved_info, os.path.join(save_folder, 'info.json'), json_file=True)
             logger.info('Save info to info.json')
 
             model.train()
 
+        completed_epoch = epoch
         epoch += 1
         lr_scheduler.step()
         opt.current_lr = optimizer.param_groups[0]['lr']
+        resume_pending_validation = False
+        if saved_this_epoch:
+            # One self-contained state: model, optimizer, next-epoch scheduler, RNG and metadata.
+            complete = snapshot(model, optimizer, lr_scheduler, completed_epoch, iteration,
+                                saved_info, vars(opt), 'epoch_complete')
+            atomic_save(complete, checkpoint_path)
+            if new_best:
+                atomic_save(complete, os.path.join(save_folder, 'model-best.pth'))
+            if opt.save_all_checkpoint:
+                atomic_save(complete, os.path.join(save_folder, 'model_epoch_{}.pth'.format(completed_epoch)))
         torch.cuda.empty_cache()
         # Stop criterion
         if epoch >= opt.epoch:

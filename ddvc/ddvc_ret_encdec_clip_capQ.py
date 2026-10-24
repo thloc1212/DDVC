@@ -49,7 +49,21 @@ class TwoLayerMLP(nn.Module):
     def forward(self, x):
         return self.model(x)
 
-def event_query_cl(event_q, cap_q, temperature=0.1):
+def event_query_cl(event_q, cap_q, temperature=0.1, corrected=False):
+    if corrected:
+        if event_q.shape[1] != 1:
+            raise ValueError('DDVC matched-query contrastive path requires batch size 1')
+        if temperature <= 0:
+            raise ValueError('Contrastive temperature must be positive')
+        a, b = F.normalize(event_q, dim=-1), F.normalize(cap_q, dim=-1)
+        positive = (a * b).sum(-1, keepdim=True)
+        negative = torch.matmul(a, a.transpose(-1, -2))
+        diagonal = torch.eye(a.shape[-2], device=a.device, dtype=torch.bool)
+        negative = negative.masked_fill(diagonal, float('-inf'))
+        logits = torch.cat((positive, negative), -1) / temperature
+        labels = torch.zeros(logits.shape[:-1], device=a.device, dtype=torch.long)
+        losses = F.cross_entropy(logits.flatten(0, -2), labels.flatten(), reduction='none').reshape(labels.shape)
+        return tuple(losses[:, 0].unbind(0))
     A,B=event_q, cap_q
     def cosine_similarity(x1, x2):
         x1_norm = F.normalize(x1, dim=-1)  # L2 归一化
@@ -691,11 +705,13 @@ class CM2(nn.Module):
 
             # l_dict = {'loss_caption_cl': cl_loss[0],'loss_caption_cl_0': cl_loss[1]}
             # loss.update(l_dict)
-            if getattr(self.opt, 'learned_proposal_mask', False):
+            if (getattr(self.opt, 'learned_proposal_mask', False)
+                    and getattr(self.opt, 'mask_target', 'predicted') == 'predicted'):
                 last_reference = init_reference if hs.shape[0] == 1 else inter_references[hs.shape[0]-2]
                 context = mask_layer_context(others, out['pred_logits'], last_reference, out['pred_boxes'])
                 loss.update(self.caption_head[-1].proposal_mask.objective(
-                    out['pred_boxes'][0], dt['video_mask'], proposal_confidence(context), proposal_anchors(context)))
+                    out['pred_boxes'][0], dt['video_mask'], proposal_confidence(context), proposal_anchors(context),
+                    query=hs_cap[-1, 0]))
             return out, loss
         else:
             return memory
@@ -819,6 +835,7 @@ class CM2(nn.Module):
                 if l_id != hs.shape[0] - 1:
                     l_dict = {k + f'_{l_id}': v for k, v in l_dict.items()}
                 loss.update(l_dict)
+
         return out, loss
     def parallel_prediction_full(self, dt, criterion, contrastive_criterion, hs,hs_cap, query_embed, init_reference,
                                  inter_references, others,
@@ -975,6 +992,21 @@ class CM2(nn.Module):
                     l_dict = {k + f'_{l_id}': v for k, v in l_dict.items()}
                 loss.update(l_dict)
 
+                if (l_id == hs.shape[0] - 1 and getattr(self.opt, 'learned_proposal_mask', False)
+                        and getattr(self.opt, 'mask_target', 'predicted') == 'matched_gt'):
+                    src_ids, tgt_ids = indices[0]  # batch 1, exact final-layer Hungarian pairs
+                    if len(src_ids):
+                        src_ids = src_ids.to(hs.device)
+                        tgt_ids = tgt_ids.to(dt['video_target'][0]['boxes'].device)
+                        loss.update(self.caption_head[l_id].proposal_mask.objective(
+                            outputs_coords[l_id][0, src_ids], dt['video_mask'],
+                            proposal_confidence(mask_others, src_ids), proposal_anchors(mask_others, src_ids),
+                            query=hs_lid_cap[0, src_ids],
+                            target_boxes=dt['video_target'][0]['boxes'][tgt_ids],
+                            balanced=getattr(self.opt, 'mask_balanced_bce', False),
+                            prune_threshold=getattr(self.opt, 'mask_prune_threshold', -1.)))
+                    else:
+                        loss['loss_proposal_mask'] = hs_lid_cap.sum() * 0
             out.update({'caption_probs': cap_probs, 'seq': seq})
 
         else:
@@ -1011,9 +1043,9 @@ class CM2(nn.Module):
         tmp_taget_feature.scatter_(dim=2, index=tmp_index_expanded.to(taget_feature.device), src=y)
 
         if self.opt.capQ_addP=="after":
-            cl_loss=event_query_cl(self.two_layer_mlp(hs),tmp_taget_feature,self.opt.contrastive_loss_temperature)
+            cl_loss=event_query_cl(self.two_layer_mlp(hs),tmp_taget_feature,self.opt.contrastive_loss_temperature, corrected=getattr(self.opt, 'corrected_query_contrastive', False))
         else:
-            cl_loss=event_query_cl(self.two_layer_mlp(hs),tmp_taget_feature,self.opt.contrastive_loss_temperature)
+            cl_loss=event_query_cl(self.two_layer_mlp(hs),tmp_taget_feature,self.opt.contrastive_loss_temperature, corrected=getattr(self.opt, 'corrected_query_contrastive', False))
         
         l_dict = {'loss_contrastive': cl_loss[1][indices[0][0]].mean(),'loss_contrastive_0': cl_loss[0][indices[0][0]].mean()}
         loss.update(l_dict)
@@ -1518,6 +1550,8 @@ class MLP(nn.Module):
 
 
 def build(args):
+    if getattr(args, 'learned_proposal_mask', False) and getattr(args, 'mask_target', 'predicted') == 'matched_gt' and not args.aux_loss:
+        raise ValueError('matched_gt mask supervision currently requires aux_loss=True')
     if getattr(args, 'learned_proposal_mask', False) and args.proposal_mask_loss_coef < 0:
         raise ValueError('proposal_mask_loss_coef must be nonnegative')
     device = torch.device(args.device)

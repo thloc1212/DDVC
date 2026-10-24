@@ -139,6 +139,18 @@ def parse_opts():
     parser.add_argument('--proposal_mask_bins', type=int, default=64)
     parser.add_argument('--proposal_mask_encoding_dim', type=int, default=128)
     parser.add_argument('--proposal_mask_loss_coef', type=float, default=1.0)
+    parser.add_argument('--mask_query_conditioning', action='store_true', default=False)
+    parser.add_argument('--mask_target', choices=['predicted', 'matched_gt'], default='predicted')
+    parser.add_argument('--mask_balanced_bce', action='store_true', default=False)
+    parser.add_argument('--mask_gate_min', type=float, default=0.0)
+    parser.add_argument('--mask_gate_max', type=float, default=1.0)
+    parser.add_argument('--mask_context_ratio', type=float, default=0.0,
+                        help='Extra fraction of event duration on EACH side, consistent with hard_local')
+    parser.add_argument('--mask_min_frames', type=int, default=1)
+    parser.add_argument('--mask_prune_threshold', type=float, default=-1.0,
+                        help='Negative disables pruning; otherwise keep weights>threshold OR predicted context window')
+    parser.add_argument('--corrected_query_contrastive', action='store_true', default=False)
+    parser.add_argument('--data_signature', type=str, default='')
     parser.add_argument('--local_visual_attention', action='store_true', default=False,
                         help='Caption each event using its predicted temporal interval')
     parser.add_argument('--local_visual_context_ratio', type=float, default=0.1,

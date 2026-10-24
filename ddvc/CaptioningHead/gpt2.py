@@ -44,7 +44,13 @@ class GPT2CaptionModel(nn.Module):
         if getattr(opt, 'learned_proposal_mask', False):
             with torch.random.fork_rng(devices=[]):
                 torch.default_generator.manual_seed(1731)
-                self.proposal_mask = LearnedGatedProposalMask(opt.proposal_mask_bins, opt.proposal_mask_encoding_dim)
+                self.proposal_mask = LearnedGatedProposalMask(
+                    opt.proposal_mask_bins, opt.proposal_mask_encoding_dim,
+                    query_dim=opt.hidden_dim if getattr(opt, 'mask_query_conditioning', False) else 0,
+                    gate_min=getattr(opt, 'mask_gate_min', 0.0),
+                    gate_max=getattr(opt, 'mask_gate_max', 1.0),
+                    context_ratio=getattr(opt, 'mask_context_ratio', 0.0),
+                    min_frames=getattr(opt, 'mask_min_frames', 1))
 
         self.prefix_token=self.tokenizer("<|endoftext|>",return_tensors="pt")["input_ids"].to(opt.device)
 
@@ -65,11 +71,16 @@ class GPT2CaptionModel(nn.Module):
         if getattr(self.opt, 'learned_proposal_mask', False):
             if event_boxes is None or len(event_boxes) != hs.shape[0]:
                 raise ValueError('Learned masks need one interval per caption query')
-            details = self.proposal_mask(event_boxes, video_mask, event_scores, anchor_boxes)
+            details = self.proposal_mask(event_boxes, video_mask, event_scores, anchor_boxes, query=hs[:, 0])
             # Detach frozen CLIP features BEFORE gating, so caption gradients
             # still reach the learned mask, predicted interval and event score.
             cross_emb = (cross_emb * details['weights'].unsqueeze(-1)).contiguous()
             mask = video_mask.to(device=cross_emb.device, dtype=torch.bool).expand(hs.shape[0], -1)
+            threshold = getattr(self.opt, 'mask_prune_threshold', -1.0)
+            if threshold >= 0:
+                # Non-differentiable selection; CE still trains soft weights on retained positions.
+                # hard already includes context/minimum-frame fallback, never GT.
+                mask = mask & ((details['weights'].detach() > threshold) | details['hard'].bool())
         elif getattr(self.opt, 'local_visual_attention', False):
             if event_boxes is None or len(event_boxes) != hs.shape[0]:
                 raise ValueError('Each caption query needs its own predicted interval')

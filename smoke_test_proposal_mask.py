@@ -156,5 +156,63 @@ def main():
     head.load_state_dict(saved)
     print('PASS: mask parameters are included in the caption-head checkpoint state')
 
+    # Upgraded experiment: real matched DDVC path, query-conditioned masks and GT-only objective.
+    head.proposal_mask = pm.LearnedGatedProposalMask(16,32,query_dim=8,
+        gate_min=.1,gate_max=.85,context_ratio=.1,min_frames=4)
+    head.opt.mask_prune_threshold=.05
+    model.opt.learned_proposal_mask=True
+    model.opt.mask_target='matched_gt'
+    model.opt.mask_balanced_bce=True
+    model.opt.corrected_query_contrastive=True
+    probe_a=torch.randn(2,1,4,8,requires_grad=True);probe_b=torch.randn_like(probe_a)
+    cold=namespace['event_query_cl'](probe_a,probe_b,.1,corrected=True)
+    warm=namespace['event_query_cl'](probe_a,probe_b,1.,corrected=True)
+    assert any(not torch.allclose(x,y) for x,y in zip(cold,warm))
+    assert all(torch.isfinite(x).all() for x in cold)
+    single=namespace['event_query_cl'](probe_a[:,:,:1],probe_b[:,:,:1],.1,corrected=True)
+    assert all(torch.allclose(x,torch.zeros_like(x)) for x in single), 'Self-negative was not removed'
+    model.train()
+    model.zero_grad(set_to_none=True)
+    h2=h.detach().clone().requires_grad_();hc2=hc.detach().clone().requires_grad_()
+    calls=[]
+    objective=head.proposal_mask.objective
+    def checked_objective(*args,**kwargs):
+        calls.append((args[0].detach().clone(),kwargs['target_boxes'].detach().clone(),kwargs['query'].shape))
+        return objective(*args,**kwargs)
+    head.proposal_mask.objective=checked_objective
+    upgraded,losses=model.parallel_prediction_matched(dt,Criterion(),None,h2,hc2,None,init,inter,others,False)
+    assert len(calls)==1 and calls[0][0].shape==(2,2)
+    torch.testing.assert_close(calls[0][0],upgraded['pred_boxes'][0,pairs[0][0]])
+    torch.testing.assert_close(calls[0][1],dt['video_target'][0]['boxes'][pairs[0][1]])
+    assert calls[0][2]==(2,8) and torch.isfinite(losses['loss_proposal_mask'])
+    sum(v for k,v in losses.items() if k.startswith('loss_')).backward()
+    assert head.proposal_mask.query_proj.weight.grad.abs().sum()>0
+    assert hc2.grad.abs().sum()>0
+    del head.proposal_mask.objective
+    # Force very small soft weights: all outside-context positions must be pruned.
+    with torch.no_grad():
+        head.proposal_mask.mask_model[-1].weight.zero_()
+        head.proposal_mask.mask_model[-1].bias.fill_(-12.)
+    head.eval()
+    prune_boxes=torch.tensor([[[.25,.05]]]).expand(1,q,2)
+    context=pm.mask_layer_context(others,upgraded['pred_logits'],inter[0],prune_boxes)
+    qstates=hc2[-1,0].detach()[:,None]
+    feature,keep=head.visual_context(qstates,video.detach(),prune_boxes[0],valid,
+        pm.proposal_confidence(context).detach(),pm.proposal_anchors(context))
+    detail=head.proposal_mask(prune_boxes[0],valid,
+        pm.proposal_confidence(context).detach(),pm.proposal_anchors(context),query=qstates[:,0])
+    assert torch.equal(keep,detail['hard'].bool()) and (keep.sum(-1)>=4).all()
+    assert not keep[:,8:].any() and detail['gate'].min()>=.1 and detail['gate'].max()<=.85
+    # Actual GPT-2 output must ignore changes to frames pruned for every caption query.
+    changed=video.detach().clone();outside=~keep.any(0);assert outside[:8].any();changed[:,outside]=500.
+    with torch.no_grad():
+        a=head.generate(qstates,None,{},video.detach(),prune_boxes[0],valid,
+            pm.proposal_confidence(context).detach(),pm.proposal_anchors(context))
+        b=head.generate(qstates,None,{},changed,prune_boxes[0],valid,
+            pm.proposal_confidence(context).detach(),pm.proposal_anchors(context))
+    assert torch.equal(a.sequences,b.sequences)
+    for x,y in zip(a.scores,b.scores):torch.testing.assert_close(x,y)
+    print('PASS: upgraded matched-GT query alignment, query-projection backward, bounded gate, context/pruning, real beam generation invariance')
+
 
 if __name__=='__main__':main()
