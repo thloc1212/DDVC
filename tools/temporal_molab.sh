@@ -5,8 +5,10 @@ trap 'echo "FAILED at line $LINENO. See output above and the logs directory." >&
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 WORK=$(dirname "$REPO")
 PY=${DDVC_PYTHON:-/tmp/uv-venv/bin/python}
-RUN=yc2_full_cvpr2018_e25_b1
-SMOKE_RUN=yc2_smoke_cvpr2018_e2_b1
+MODE=${2:-time_frame}
+case "$MODE" in global|frame_only|time_only|time_frame) ;; *) echo 'Mode must be global, frame_only, time_only or time_frame'; exit 1;; esac
+RUN=yc2_full_${MODE}_e25_b1
+SMOKE_RUN=yc2_smoke_${MODE}_e2_b1
 CFG="$WORK/prepared/$RUN/config.yml"
 export WORK REPO PY RUN CFG
 export CUDA_VISIBLE_DEVICES=${DDVC_GPU:-0}
@@ -30,14 +32,14 @@ prepare() {
   if [[ -f "$WORK/prepared/$name/config.yml" ]]; then
     echo "Existing config retained: $WORK/prepared/$name/config.yml"; return
   fi
-  logged "prepare_$mode" "$PY" -u tools/molab_pipeline.py prepare \
-    --mode "$mode" --run-name "$name" --epochs "$epochs" \
+  logged "prepare_${mode}_${MODE}" "$PY" -u tools/molab_pipeline.py prepare \
+    --mode "$mode" --run-name "$name" --epochs "$epochs" --caption-conditioning "$MODE" \
     --data-root "${DDVC_DATA_ROOT:-$WORK/assets}" --prepared-root "$WORK/prepared" \
     --output-root "$WORK/runs" --log-root "$WORK/logs"
 }
 
 check_config() {
-  "$PY" -c 'import json,sys,yaml; c=yaml.safe_load(open(sys.argv[1])); n=len(json.load(open(c["train_caption_file"]))); v=len(json.load(open(c["val_caption_file"]))); assert c["experiment_recipe"]=="legacy_cvpr2018_mask"; assert (c["epoch"],c["batch_size"],c["gradient_accumulation_steps"],c["precision"],c["caption_cost_chunk_size"])==(25,1,1,"fp32",16); assert not any(c[k] for k in ["mask_query_conditioning","mask_balanced_bce","corrected_query_contrastive","allow_tf32"]); assert c["mask_target"]=="predicted" and c["mask_prune_threshold"]<0; assert (n,v)==(1237,436),(n,v); print("LEGACY_FULL_CONFIG_OK",n,v,"videos; 25 epochs, batch 1, accumulation 1, FP32")' "$CFG"
+  "$PY" tools/temporal_recipe.py --config "$CFG" --mode "$MODE" --full
 }
 
 start_training() {
@@ -69,14 +71,14 @@ PY
 
 case ${1:-help} in
   setup)
-    "$PY" smoke_test_legacy_recipe.py
+    "$PY" smoke_test_temporal_recipe.py
     "$PY" -c 'import torch,torchvision; assert torch.cuda.is_available(); print(torch.__version__,torch.version.cuda)'
     "$PY" -c 'import json,torch,torchvision; from pathlib import Path; Path("../provenance/native_torch_before.json").write_text(json.dumps([torch.__version__,torchvision.__version__]))'
     logged packages uv pip install --python "$PY" -r tools/molab-requirements.txt
     logged clip uv pip install --python "$PY" --no-build-isolation --no-deps 'git+https://github.com/openai/CLIP.git@dcba3cb2e2827b402d2701e7e1c7d9fed8a20ef1'
     "$PY" -c 'import json,torch,torchvision; from pathlib import Path; assert json.loads(Path("../provenance/native_torch_before.json").read_text())==[torch.__version__,torchvision.__version__],"Native Torch changed"'
     "$PY" tools/molab_pipeline.py patch
-    "$PY" smoke_test_legacy_recipe.py
+    "$PY" smoke_test_temporal_recipe.py
     logged java "$PY" -u tools/molab_pipeline.py java --target "$WORK/tools/java"
     if [[ $("$PY" -c 'import torch; print(torch.version.cuda)') == 13.0 ]]; then
       logged toolchain "$PY" -u tools/molab_cuda130.py --work "$WORK"
@@ -91,19 +93,19 @@ case ${1:-help} in
     ;;
   prepare-smoke) test -f "$WORK/provenance/cuda_ready"; prepare smoke "$SMOKE_RUN" 2 ;;
   smoke)
-    logged smoke "$PY" -u tools/molab_pipeline.py smoke --config "$WORK/prepared/$SMOKE_RUN/config.yml"
-    touch "$WORK/provenance/model_smoke_ready"
+    logged "smoke_${MODE}" "$PY" -u tools/molab_pipeline.py smoke --config "$WORK/prepared/$SMOKE_RUN/config.yml"
+    touch "$WORK/provenance/model_smoke_${MODE}_ready"
     ;;
-  train-smoke) logged smoke_train "$PY" -u train.py --cfg_path "$WORK/prepared/$SMOKE_RUN/config.yml" ;;
+  train-smoke) logged "smoke_train_${MODE}" "$PY" -u train.py --cfg_path "$WORK/prepared/$SMOKE_RUN/config.yml" ;;
   prepare-full) test -f "$WORK/provenance/cuda_ready"; prepare full "$RUN" 25; check_config ;;
-  train) test -f "$WORK/provenance/cuda_ready"; test -f "$WORK/provenance/model_smoke_ready"; start_training no ;;
+  train) test -f "$WORK/provenance/cuda_ready"; test -f "$WORK/provenance/model_smoke_${MODE}_ready"; start_training no ;;
   resume) test -f "$WORK/provenance/cuda_ready"; start_training yes ;;
   restage) logged restage "$PY" -u tools/molab_pipeline.py restage --config "$CFG" --data-root "${DDVC_DATA_ROOT:-$WORK/assets}" ;;
-  smoke-resume) logged resume_smoke "$PY" -u tools/molab_pipeline.py smoke --config "$CFG" --checkpoint "$WORK/runs/$RUN/model-last.pth" ;;
+  smoke-resume) logged "resume_smoke_${MODE}" "$PY" -u tools/molab_pipeline.py smoke --config "$CFG" --checkpoint "$WORK/runs/$RUN/model-last.pth" ;;
   logs) exec tail -n 80 -f "$WORK/logs/$RUN.log" ;;
   report) "$PY" tools/molab_pipeline.py report --config "$CFG" ;;
   status)
     if [[ -f "$WORK/logs/$RUN.pid" ]]; then ps -p "$(cat "$WORK/logs/$RUN.pid")" -o pid,etime,%cpu,%mem,args || true; fi
     tail -n 40 "$WORK/logs/$RUN.log" ;;
-  *) echo 'Commands: setup prepare-smoke smoke train-smoke prepare-full train logs status report restage smoke-resume resume' ;;
+  *) echo 'Usage: temporal_molab.sh COMMAND [global|frame_only|time_only|time_frame]. Default: time_frame. Commands: setup prepare-smoke smoke train-smoke prepare-full train logs status report restage smoke-resume resume' ;;
 esac

@@ -155,6 +155,7 @@ def main():
     saved=copy.deepcopy(head.state_dict())
     head.load_state_dict(saved)
     print('PASS: mask parameters are included in the caption-head checkpoint state')
+    return locals()
 
 
 if __name__=='__main__':main()

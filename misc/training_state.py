@@ -81,7 +81,8 @@ def snapshot(model, optimizer, scheduler, epoch, iteration, info, config, phase,
 def validate_resume(config, previous):
     if config.get('gradient_accumulation_steps', 1) != previous.get('gradient_accumulation_steps', 1):
         raise ValueError('Resume effective batch changed; start a new run for a batch ablation.')
-    for key,default in [('precision','fp32'),('allow_tf32',False),('nthreads',0),('pin_memory',False)]:
+    for key,default in [('precision','fp32'),('allow_tf32',False),('nthreads',0),('pin_memory',False),
+                        ('caption_time_conditioning',False),('caption_frame_time_embedding',False)]:
         if config.get(key,default)!=previous.get(key,default):
             raise ValueError('Resume runtime precision/loader recipe changed: '+key)
     # Paths can change when restoring Kaggle outputs, but architecture/data recipe must not.
@@ -96,6 +97,8 @@ def validate_resume(config, previous):
             'cl_schedule_time', 'cl_schedule_val', 'cls_loss_coef', 'giou_loss_coef',
             'bbox_loss_coef', 'count_loss_coef', 'caption_loss_coef', 'loss_caption_cl',
             'contrastive_loss_coef', 'caption_cost_chunk_size')
+    keys += ('caption_time_bands','caption_time_hidden','caption_time_scale',
+             'caption_frame_time_scale','caption_time_detach_boxes','caption_conditioning_mode','experiment_recipe')
     changed = [k for k in keys if k in previous and config.get(k) != previous[k]]
     if changed:
         raise ValueError('Resume recipe differs for: ' + ', '.join(changed) + '. Start a new run instead.')

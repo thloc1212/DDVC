@@ -22,6 +22,7 @@ import torch.nn as nn
 from transformers import  GPT2Config, GPT2Model, GPT2Tokenizer, GPT2LMHeadModel
 from .local_visual import event_visual_mask
 from .proposal_mask import LearnedGatedProposalMask
+from .temporal_caption import TemporalCaptionConditioning
 
 class GPT2CaptionModel(nn.Module):
     def __init__(self, opt):
@@ -41,6 +42,23 @@ class GPT2CaptionModel(nn.Module):
 
         self.model = GPT2LMHeadModel(configuration)
         self.proposal_mask = None
+        self.temporal_conditioner = None
+        self.temporal_diagnostics = {}
+        time_prefix=getattr(opt,'caption_time_conditioning',False)
+        frame_time=getattr(opt,'caption_frame_time_embedding',False)
+        if time_prefix or frame_time:
+            if (not opt.add_cross_attention or getattr(opt,'learned_proposal_mask',False)
+                    or getattr(opt,'local_visual_attention',False)):
+                raise ValueError('Temporal caption experiment requires global, ungated visual cross-attention')
+            # Keep backbone RNG identical across global/time/frame ablations.
+            with torch.random.fork_rng(devices=[]):
+                torch.default_generator.manual_seed(1732)
+                self.temporal_conditioner=TemporalCaptionConditioning(
+                    bands=getattr(opt,'caption_time_bands',8),hidden=getattr(opt,'caption_time_hidden',128),
+                    time_prefix=time_prefix,frame_positions=frame_time,
+                    prefix_scale=getattr(opt,'caption_time_scale',1.),
+                    frame_scale=getattr(opt,'caption_frame_time_scale',1.),
+                    detach_boxes=getattr(opt,'caption_time_detach_boxes',True))
         if getattr(opt, 'learned_proposal_mask', False):
             with torch.random.fork_rng(devices=[]):
                 torch.default_generator.manual_seed(1731)
@@ -54,6 +72,21 @@ class GPT2CaptionModel(nn.Module):
         prefix_emb = self.fc2(prefix_emb)
         return prefix_emb
 
+    def caption_prefix(self,hs,event_boxes=None):
+        # input_project stays semantic-only for the existing CLIP alignment loss.
+        prefix=self.input_project(hs)
+        conditioner=getattr(self,'temporal_conditioner',None)
+        if conditioner is not None and conditioner.prefix_mlp is not None:
+            if event_boxes is None or len(event_boxes)!=len(hs):
+                raise ValueError('Each caption prefix needs its own predicted interval')
+            delta=conditioner.prefix_delta(event_boxes).to(prefix.dtype)
+            if not hasattr(self,'temporal_diagnostics'):self.temporal_diagnostics={}
+            self.temporal_diagnostics.update({
+                'diag_caption_time_prefix_norm':delta.detach().norm(dim=-1).mean(),
+                'diag_caption_time_prefix_ratio':(delta.detach().norm(dim=-1)/prefix.detach().norm(dim=-1).clamp_min(1e-8)).mean()})
+            prefix=prefix+delta
+        return prefix
+
 
     def visual_context(self, hs, clip_frame_feature, event_boxes=None, video_mask=None, event_scores=None, anchor_boxes=None):
         if clip_frame_feature.shape[0] != 1:
@@ -62,6 +95,15 @@ class GPT2CaptionModel(nn.Module):
         cross_emb = clip_frame_feature.repeat(hs.shape[0], 1, 1).detach()
         if video_mask is None:
             video_mask = torch.ones(1, cross_emb.shape[1], device=cross_emb.device, dtype=torch.bool)
+        conditioner=getattr(self,'temporal_conditioner',None)
+        if conditioner is not None and conditioner.frame_projection is not None:
+            delta=conditioner.frame_delta(video_mask).to(cross_emb.dtype)
+            valid=video_mask.bool()
+            if not hasattr(self,'temporal_diagnostics'):self.temporal_diagnostics={}
+            self.temporal_diagnostics.update({
+                'diag_caption_frame_time_norm':delta.detach().norm(dim=-1)[valid].mean(),
+                'diag_caption_frame_time_ratio':(delta.detach().norm(dim=-1)/clip_frame_feature.detach().norm(dim=-1).clamp_min(1e-8))[valid].mean()})
+            cross_emb=cross_emb+delta
         if getattr(self.opt, 'learned_proposal_mask', False):
             if event_boxes is None or len(event_boxes) != hs.shape[0]:
                 raise ValueError('Learned masks need one interval per caption query')
@@ -82,8 +124,8 @@ class GPT2CaptionModel(nn.Module):
 
     def forward(self, hs, cap_label, cap_mask ,others, cap_tensor, clip_fram_feature,get_loss=True,
                 event_boxes=None, video_mask=None, event_scores=None, anchor_boxes=None):
-        prefix_emb = self.relu(self.fc1(hs))
-        prefix_emb = self.fc2(prefix_emb)
+        self.temporal_diagnostics={}
+        prefix_emb = self.caption_prefix(hs,event_boxes)
         input_emb=self.model.transformer.wte(cap_label)
         input_emb[:,:1,:]=prefix_emb
         if self.opt.add_cross_attention==False:
@@ -101,8 +143,8 @@ class GPT2CaptionModel(nn.Module):
 
     def generate(self,hs, reference, others, clip_fram_feature, event_boxes=None, video_mask=None, event_scores=None, anchor_boxes=None):
         with torch.no_grad():
-            prefix_emb = self.relu(self.fc1(hs))
-            prefix_emb = self.fc2(prefix_emb)
+            self.temporal_diagnostics={}
+            prefix_emb = self.caption_prefix(hs,event_boxes)
             seqNum_prefix_token=self.prefix_token.repeat(hs.shape[0], 1)
             input_emb=self.model.transformer.wte(seqNum_prefix_token)
             input_emb[:,:1,:]=prefix_emb

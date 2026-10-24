@@ -204,10 +204,20 @@ def resolve_profile(args):
     for key,value in defaults.items():
         if getattr(args,key,None) is None:setattr(args,key,value)
     if args.accumulation!=1 or args.precision!='fp32' or args.allow_tf32:
-        raise ValueError('Legacy reproduction requires batch 1, accumulation 1, FP32, TF32 disabled')
+        raise ValueError('Controlled caption experiment requires batch 1, accumulation 1, FP32, TF32 disabled')
     if args.caption_chunk!=16 or args.workers!=0 or args.bank_batch!=64 or args.pin_memory:
-        raise ValueError('Legacy reproduction keeps caption chunk 16, workers 0, bank batch 64, no pinned memory')
+        raise ValueError('Controlled caption experiment keeps caption chunk 16, workers 0, bank batch 64, no pinned memory')
     return args
+
+
+def conditioning_options(mode):
+    if mode not in ('global','frame_only','time_only','time_frame'):
+        raise ValueError('Unknown caption conditioning ablation: '+str(mode))
+    return dict(caption_conditioning_mode=mode,
+                caption_time_conditioning=mode in ('time_only','time_frame'),
+                caption_frame_time_embedding=mode in ('frame_only','time_frame'),
+                caption_time_bands=8,caption_time_hidden=128,caption_time_scale=1.0,
+                caption_frame_time_scale=1.0,caption_time_detach_boxes=True)
 
 
 def prepare(args):
@@ -219,7 +229,7 @@ def prepare(args):
     import re
     if not re.fullmatch(r'[A-Za-z0-9_-]+',args.run_name):raise ValueError('Use a simple run-name: letters, digits, underscores, hyphens')
     if args.epochs<1 or args.accumulation<1 or args.log_every<1:raise ValueError('Epochs/accumulation/log interval must be positive')
-    if args.mask_loss!=1.0:raise ValueError('Legacy recipe keeps proposal mask loss coefficient 1.0')
+    if args.mask_loss!=0.0:raise ValueError('Temporal caption experiment does not enable a mask loss')
     if not torch.cuda.is_available():
         raise RuntimeError('Select a Molab GPU before CLIP-bank preparation')
     REPO = ROOT
@@ -230,12 +240,12 @@ def prepare(args):
     PREPARED.mkdir(parents=True,exist_ok=True)
     RUN_MODE, SEED, EPOCHS = args.mode, args.seed, args.epochs
     ACTIVE_FRACTION = {'smoke':.01,'subset':.30,'full':1.}[RUN_MODE]
-    RUN_ID, RESUME_RUN_ID, MASK_MODE = args.run_name, '', args.mask_mode
+    RUN_ID, RESUME_RUN_ID, MASK_MODE = args.run_name, '', 'global'
     SAVE_DIR = str(Path(args.output_root).expanduser().resolve())
     Path(SAVE_DIR).mkdir(parents=True,exist_ok=True)
     LOG_PATH = Path(args.log_root).expanduser().resolve()/(RUN_ID+'.log')
     SOURCE_COMMIT = revision()
-    MASK_BINS,MASK_ENCODING_DIM,MASK_LOSS_COEF=64,128,args.mask_loss
+    MASK_BINS,MASK_ENCODING_DIM,MASK_LOSS_COEF=64,128,0.0
     MASK_TARGET='predicted'
     QUERY_CONDITIONING=False
     PRUNE_THRESHOLD=-1.0
@@ -418,7 +428,8 @@ def prepare(args):
     del model_clip,encoded,emb; torch.cuda.empty_cache()
     import yaml
     opts=json.loads((REPO/'opts.json').read_text())
-    opts['experiment_recipe']='legacy_cvpr2018_mask'
+    opts['experiment_recipe']='temporal_caption_prefix'
+    opts.update(conditioning_options(args.caption_conditioning))
     import hashlib
     data_signature = hashlib.sha256(train_json.read_bytes()+val_json.read_bytes()+vocab_path.read_bytes()).hexdigest()
     opts.update({
@@ -435,7 +446,7 @@ def prepare(args):
      'gpu_id':[0],'device':'cuda','batch_size':1,'batch_size_for_eval':1,
      'nthreads':args.workers,'pin_memory':args.pin_memory,'precision':args.precision,'allow_tf32':args.allow_tf32,'hardware_profile':args.hardware_profile,'fixed_run_id':True,'gradient_accumulation_steps':args.accumulation,'progress_log_every':args.log_every,'epoch':EPOCHS,'min_epoch_when_save':0,'save_checkpoint_every':1,
      'save_all_checkpoint':False,'save_dir':SAVE_DIR,'id':RUN_ID,
-     'exp_name':f'{RUN_MODE}{len(train)}_e{EPOCHS}_{MASK_MODE}_mask_'+time.strftime('%Y%m%d_%H%M%S'),'start_from':RESUME_RUN_ID,'start_from_mode':'last','pretrain':None,
+     'exp_name':f'{RUN_MODE}{len(train)}_e{EPOCHS}_{args.caption_conditioning}_'+time.strftime('%Y%m%d_%H%M%S'),'start_from':RESUME_RUN_ID,'start_from_mode':'last','pretrain':None,
      'seed':SEED,'random_seed':False,'debug':False,'disable_tqdm':False,
      'train_proposal_sample_num':30,'gt_proposal_sample_num':10,
      'soft_k':20,'window_size':80,'ret_encoder':'multiscale_project',
@@ -464,26 +475,29 @@ def prepare(args):
     cfg=PREPARED/'config.yml'
     cfg.write_text(yaml.safe_dump(opts,sort_keys=False))
     print(cfg, '| selected train/val:',len(train),len(val),'| vocab:',len(word_to_ix),'| epochs:',EPOCHS)
-    print('DDVC mask mode:',MASK_MODE,'| random 2-layer GPT-2 | one GPU')
-    print('New objective:',{k:opts[k] for k in ['learned_proposal_mask','proposal_mask_loss_coef','proposal_mask_bins']})
+    print('Caption conditioning:',args.caption_conditioning,'| global frames | random 2-layer GPT-2 | one GPU')
+    print('No mask/pruning or new loss:',{k:opts[k] for k in ['learned_proposal_mask','proposal_mask_loss_coef','mask_prune_threshold']})
     print("Reranking:", {k: opts[k] for k in ("ec_alpha", "count_loss_coef", "eval_matching_score_weight")})
 
     # Preserve exactly what was configured and the actual selected data IDs.
     run_manifest = {
         'gradient_accumulation_steps':args.accumulation,'maximum_effective_batch':args.accumulation,
-        'source_commit':SOURCE_COMMIT,'legacy_model_commit':'4918a0cb89bac0966f74c39e7320d44f0a780430','reference_repo':'https://github.com/bhubanendra-mishra/dense-video-cap',
+        'source_commit':SOURCE_COMMIT,'base_model_commit':'4918a0cb89bac0966f74c39e7320d44f0a780430','reference_repo':'https://github.com/bhubanendra-mishra/dense-video-cap',
         'reference_commit':'43914e17769701b9cf98eda203ae4c465b315fab',
         'mask_mode':MASK_MODE,'seed':SEED,'epochs':EPOCHS,
         'runtime_profile':{k:opts[k] for k in ['hardware_profile','precision','allow_tf32','nthreads','pin_memory','caption_cost_chunk_size']},
         'train_ids':list(train),'val_ids':list(val),
         'mask_target':MASK_TARGET, 'data_signature':data_signature,
         'mask_settings':{k:opts[k] for k in opts if k.startswith('mask_') or k=='corrected_query_contrastive'},
-        'mask_placement':'legacy feature gating before GPT-2 cross-attention; no attention pruning',
+        'conditioning_mode':args.caption_conditioning,
+        'conditioning_settings':{k:opts[k] for k in opts if k.startswith('caption_time_') or k.startswith('caption_frame_time_')},
+        'mask_placement':'none; all valid frames retained, CLIP features not multiplied by a mask',
+        'reference_temporal_code':'https://github.com/google-research/scenic/blob/693290c7b7927b27c9539561fca4ae8c8a84f98e/scenic/projects/vid2seq/models.py',
     }
     manifest_path = PREPARED/'run_manifest.json'
     manifest_path.write_text(json.dumps(run_manifest,indent=2),encoding='utf-8')
 
-    print('Action-aware mask recipe:',run_manifest['mask_settings'])
+    print('Temporal caption recipe:',run_manifest['conditioning_settings'])
     print("CONFIG_READY",cfg,flush=True)
 
 def main():
@@ -497,15 +511,15 @@ def main():
     p.add_argument('--output-root',required=True);p.add_argument('--log-root',required=True)
     p.add_argument('--run-name',required=True);p.add_argument('--mode',choices=['smoke','subset','full'],default='full')
     p.add_argument('--epochs',type=int,default=25);p.add_argument('--accumulation',type=int,default=None)
-    p.add_argument('--hardware-profile',choices=['legacy-cvpr2018'],default='legacy-cvpr2018')
+    p.add_argument('--hardware-profile',choices=['temporal-caption'],default='temporal-caption')
     p.add_argument('--precision',choices=['fp32','bf16'],default=None)
     p.add_argument('--caption-chunk',type=int,default=None);p.add_argument('--workers',type=int,default=None)
     p.add_argument('--bank-batch',type=int,default=None)
     p.add_argument('--allow-tf32',action=argparse.BooleanOptionalAction,default=None)
     p.add_argument('--pin-memory',action=argparse.BooleanOptionalAction,default=None)
     p.add_argument('--seed',type=int,default=777);p.add_argument('--log-every',type=int,default=10)
-    p.add_argument('--mask-mode',choices=['global','hard_local','learned_gated'],default='learned_gated')
-    p.add_argument('--mask-loss',type=float,default=1.0)
+    p.add_argument('--caption-conditioning',choices=['global','frame_only','time_only','time_frame'],default='time_frame')
+    p.add_argument('--mask-loss',type=float,default=0.0)
     for name in ['smoke','resume-config','report']:
         p=sub.add_parser(name);p.add_argument('--config',required=True)
         if name=='smoke':

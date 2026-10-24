@@ -33,7 +33,7 @@ from ddvc.ddvc_ret_encdec_clip_capQ import build
 from collections import OrderedDict
 from ret_utils import load_clip_memory_bank, load_clip_gt
 from misc.training_state import (atomic_save, capture_rng, restore_rng, snapshot,
-                                 schedule_contrastive, validate_resume)
+                                 schedule_contrastive, validate_resume, plain_metadata)
 from misc.runtime_perf import amp_context,configure_runtime,vram_metrics,append_performance
 
 # global clip_gt
@@ -335,7 +335,7 @@ def train(opt):
             if current_score >= best_val_score:
                 best_val_score = current_score
                 best_epoch = epoch
-                saved_info['best'] = {'opt': vars(opt),
+                saved_info['best'] = {'opt': plain_metadata(vars(opt)),
                                       'iter': iteration,
                                       'epoch': best_epoch,
                                       'best_val_score': float(best_val_score),
@@ -350,7 +350,7 @@ def train(opt):
                 logger.info('Save Best-model at iter {} to checkpoint file.'.format(iteration))
                 logger.info('Save Best-model at epoch {} to checkpoint file.'.format(epoch))
 
-            saved_info['last'] = {'opt': vars(opt),
+            saved_info['last'] = {'opt': plain_metadata(vars(opt)),
                                   'iter': iteration,
                                   'epoch': epoch,
                                   'best_val_score': float(best_val_score),
