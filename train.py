@@ -63,7 +63,7 @@ def train(opt):
     tf_writer = SummaryWriter(os.path.join(save_folder, 'tf_summary'))
 
     if not opt.start_from:
-        backup_envir(save_folder)
+        backup_envir(save_folder, vars(opt))
         logger.info('backup evironment completed !')
 
     saved_info = {'best': {}, 'last': {}, 'history': {}, 'eval_history': {}}

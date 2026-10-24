@@ -123,13 +123,25 @@ def build_floder(opt):
     return save_folder
 
 
-def backup_envir(save_folder):
+def backup_envir(save_folder, options=None):
+    import json
+    source_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    backup_root = os.path.join(save_folder, 'backup')
+    os.makedirs(backup_root, exist_ok=True)
     backup_folders = ['cfgs', 'misc', 'ddvc']
-    backup_files = glob.glob('./*.py')
+    backup_files = glob.glob(os.path.join(source_root, '*.py'))
     for folder in backup_folders:
-        shutil.copytree(folder, os.path.join(save_folder, 'backup', folder))
+        source = os.path.join(source_root, folder)
+        if folder == 'cfgs' and not os.path.isdir(source):
+            print('Source archive has no optional cfgs folder; using prepared run config.')
+            continue
+        shutil.copytree(source, os.path.join(backup_root, folder),
+                        ignore=shutil.ignore_patterns('__pycache__', 'build', '*.so'))
     for file in backup_files:
-        shutil.copyfile(file, os.path.join(save_folder, 'backup', file))
+        shutil.copyfile(file, os.path.join(backup_root, os.path.basename(file)))
+    if options is not None:
+        with open(os.path.join(backup_root, 'effective_config.json'), 'w') as stream:
+            json.dump(options, stream, indent=2)
 
 
 def create_logger(folder, filename):
