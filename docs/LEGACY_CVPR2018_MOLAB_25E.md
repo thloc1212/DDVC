@@ -50,55 +50,61 @@ Với full data và 25 epoch có 30.925 optimizer updates. Tăng epoch từ bả
 
 Các sửa này phục vụ khả năng chạy/lưu/resume. Không thêm kiến trúc, loss hay supervision từ nhánh Action-Aware.
 
-## 3. Giải nén trên Molab
+## 3. Link cố định của bạn
 
-Chọn RTX Pro 6000 và native GPU runtime. Không dừng/xoá run Action-Aware hiện có.
-Gói mới dùng thư mục riêng `/marimo/DDVC_CVPR2018_Molab`.
+- [Code ZIP hiện tại](https://drive.google.com/file/d/1JmJL2hVEfnqkIhUak-ol5EMM9XNBBXjE/view?usp=drive_link).
+- [Folder Drive chứa code lâu dài](https://drive.google.com/drive/folders/1JtVmVYfZYlxbcR96pKMhWqxODi2WkJZI).
+- File ID: `1JmJL2hVEfnqkIhUak-ol5EMM9XNBBXjE`.
+- Folder ID: `1JtVmVYfZYlxbcR96pKMhWqxODi2WkJZI`.
 
-Cách A: upload `DDVC_CVPR2018_Masking_Molab_25E.zip` vào Files của Molab tại `/marimo/`, rồi chạy:
+ZIP hiện tại không cần tạo lại: phần hướng dẫn mới chỉ đổi nguồn tải và nơi backup, không đổi code/model hay recipe trong ZIP.
+Local work riêng: `/marimo/DDVC_CVPR2018_Molab`. Không ghi đè run RTX/Action-Aware cũ.
+
+## 4. Tải code — terminal Molab
+
+Chọn GPU. Các lệnh dùng native interpreter đã thấy trong log Molab `/tmp/uv-venv/bin/python`; không tạo venv mới. Nếu runtime đổi đường dẫn interpreter thì lấy `sys.executable` của notebook và đặt `DDVC_PYTHON` theo đường dẫn thật khi gọi launcher.
+
+```bash
+uv pip install --python /tmp/uv-venv/bin/python gdown
+```
+
+```bash
+/tmp/uv-venv/bin/python -m gdown '1JmJL2hVEfnqkIhUak-ol5EMM9XNBBXjE' -O /marimo/DDVC_CVPR2018_Masking_Molab_25E.zip
+```
+
+Không dùng `--fuzzy`. Nếu file private và gdown bị từ chối quyền, dùng kết nối `legacy_fs` ở bước 8 rồi `legacy_fs.ls('')` để xác nhận tên file; tải bằng fs.get theo tên thực tế trong folder, không đổi quyền folder backup thành public.
 
 ```bash
 /tmp/uv-venv/bin/python -m zipfile -t /marimo/DDVC_CVPR2018_Masking_Molab_25E.zip
 ```
 
-Chỉ giải nén khi chưa có thư mục source/run cùng tên:
+Giải nén lần đầu; nếu source đã có thì giữ nguyên:
 
 ```bash
-test ! -e /marimo/DDVC_CVPR2018_Molab && /tmp/uv-venv/bin/python -m zipfile -e /marimo/DDVC_CVPR2018_Masking_Molab_25E.zip /marimo
+if [ -d /marimo/DDVC_CVPR2018_Molab/source ]; then
+  echo 'Source đã tồn tại; không giải nén đè.'
+else
+  /tmp/uv-venv/bin/python -m zipfile -e /marimo/DDVC_CVPR2018_Masking_Molab_25E.zip /marimo
+fi
 ```
 
-Cách B: nếu ZIP đặt trong Google Drive tại `DDVC_Molab/DDVC_CVPR2018_Masking_Molab_25E.zip`, dùng `fs` đã kết nối trong một cell:
-
-```python
-fs.get('DDVC_Molab/DDVC_CVPR2018_Masking_Molab_25E.zip', '/marimo/DDVC_CVPR2018_Masking_Molab_25E.zip')
+```bash
+/tmp/uv-venv/bin/python -c 'import json; from pathlib import Path; m=json.loads(Path("/marimo/DDVC_CVPR2018_Molab/BUNDLE_MANIFEST.json").read_text()); assert m["source_commit"]=="c385e6641c5ead3f0371f79141a0d773762aa71f"; print("LEGACY_PACKAGE_OK",m["source_commit"])'
 ```
 
-Rồi dùng hai lệnh kiểm tra/giải nén bên trên. Drive là remote storage qua fs, không có đường dẫn mount giả.
+Phải có `LEGACY_PACKAGE_OK`. Mỗi bản ZIP tương lai nên có tên phiên bản/commit riêng trong folder Drive; không giải nén đè source đang train.
 
-Nếu chưa có `fs`, tạo một lần bằng cell dưới. Nếu đã có thì dùng lại để tránh redefines variables:
-
-```python
-import marimo as mo
-from gdrive_fsspec import GoogleDriveFileSystem
-fs = GoogleDriveFileSystem(use_listings_cache=False, skip_instance_cache=True, auth_kwargs={"use_local_webserver": False})
-mo.output.clear_console()
-```
-
-## 4. Setup môi trường + CUDA
-
-Mỗi lệnh tự lấy WORK/REPO/RUN và CUDA env. Không phải `source ...` hay khai báo biến trước, không lệ thuộc thư mục terminal hiện tại.
+## 5. Setup thư viện và CUDA — terminal
 
 ```bash
 bash /marimo/DDVC_CVPR2018_Molab/source/tools/legacy_molab.sh setup
 ```
 
-Output hiện trên terminal và được ghi vào `logs/`. Nếu lỗi, script dừng, không tự chạy tiếp training.
-Với native Torch cu130 script tạo compiler/header ở `toolchains/cuda130-pinned` (~105 MB download, uv có thể tái dùng cache). Đây là assets compiler, không phải `.venv`. Native Torch giữ nguyên; không sửa source/runtime của run đang chạy ở thư mục khác.
+Lệnh tự nạp đường dẫn, không cần khai báo WORK/RUN hoặc source env cũ. Nó cài native dependencies, giữ Torch/torchvision, patch tokenizer/CUDA API, xử lý CCCL/compiler/header cu130, kiểm tra CUDA extension. Log vừa hiện trên terminal vừa ghi vào `/marimo/DDVC_CVPR2018_Molab/logs/`.
 
-Setup cài một lần cho runtime hiện tại. Molab reset có thể phải cài/build lại. Không thể đảm bảo package tồn tại vĩnh viễn. Không dùng sudo.
-Nếu interpreter Molab không phải `/tmp/uv-venv/bin/python`, chỉ định đường dẫn thật qua `DDVC_PYTHON` khi gọi script. Không đổi Torch tuỳ tiện.
+Với native Torch cu130, toolkit ~105 MB ở `toolchains/cuda130-pinned` là compiler assets, không phải venv. Nếu setup lỗi, script dừng; không chạy bước sau. Cài một lần cho runtime hiện tại, không bảo đảm tồn tại sau Molab reset.
 
-## 5. Smoke data và model
+## 6. Smoke model legacy — terminal
 
 ```bash
 bash /marimo/DDVC_CVPR2018_Molab/source/tools/legacy_molab.sh prepare-smoke
@@ -108,40 +114,109 @@ bash /marimo/DDVC_CVPR2018_Molab/source/tools/legacy_molab.sh prepare-smoke
 bash /marimo/DDVC_CVPR2018_Molab/source/tools/legacy_molab.sh smoke
 ```
 
-Tải annotation + CLIP features ~0.9 GB và CLIP ViT-L/14 weights để encode train-only memory bank; không cần raw video hay pretrained caption checkpoint. Smoke dùng 1% (12 train, 4 validation). Cần thấy `REAL_MODEL_FORWARD_BACKWARD_PASS` và `GENERATION_POSTPROCESS_PASS`.
+Data tự tải annotation + CLIP features ~0.9 GB + CLIP weights tạo train-only bank. Smoke dùng 12 train/4 validation. Cần `REAL_MODEL_FORWARD_BACKWARD_PASS` và `GENERATION_POSTPROCESS_PASS`.
 
-Kiểm tra thêm cả validation/metrics/Java/save bằng 2 epoch nhỏ (chạy một lần):
+Có thể kiểm tra thêm cả validation/Java/save với 2 epoch nhỏ (chạy một lần):
 
 ```bash
 bash /marimo/DDVC_CVPR2018_Molab/source/tools/legacy_molab.sh train-smoke
 ```
 
-Đây là metric smoke, không báo thành metric full. Chỉ train full sau khi đã qua smoke. Smoke cuả run Action-Aware không thay thế smoke model legacy này.
+Smoke của model Action-Aware cũ không thay thế smoke của model legacy này. Chưa dùng metric smoke làm kết quả full.
 
-## 6. Full data, 25 epoch
+## 7. Chuẩn bị full — terminal
 
 ```bash
 bash /marimo/DDVC_CVPR2018_Molab/source/tools/legacy_molab.sh prepare-full
 ```
 
-Cần `LEGACY_FULL_CONFIG_OK 1237 436 ...`. Script từ chối các profile làm đổi batch/precision/recipe. Không cần Kaggle Input dataset.
+Cần `LEGACY_FULL_CONFIG_OK`: 1237 train/436 validation, 25 epoch, batch thật 1, accumulation 1, FP32, TF32 tắt, chunk 16, seed 777, 50 queries. Giữ legacy mask target predicted; không bật các cải tiến Action-Aware.
 
-Bật backup ở bước 8 trước khi train dài. Sau đó khởi động background:
+## 8. Kết nối đúng folder Drive — cell Molab
+
+Folder của bạn được dùng làm filesystem root bằng `root_file_id`, theo [API gdrive-fsspec](https://github.com/fsspec/gdrive-fsspec/blob/master/src/gdrive_fsspec/core.py). Vì vậy không cần đoán tên folder hoặc đường dẫn My Drive.
+
+Tạo handle riêng `legacy_fs` trong MỘT cell. Không định nghĩa lại tên này ở cell khác. Handle `fs` đang dùng cho run cũ được giữ nguyên.
+
+```python
+import marimo as _mo
+from gdrive_fsspec import GoogleDriveFileSystem as _GoogleDriveFileSystem
+
+legacy_fs = _GoogleDriveFileSystem(
+    root_file_id='1JtVmVYfZYlxbcR96pKMhWqxODi2WkJZI',
+    use_listings_cache=False,
+    skip_instance_cache=True,
+    auth_kwargs={"use_local_webserver": False},
+)
+_mo.output.clear_console()
+print(legacy_fs.ls(''))
+```
+
+Tài khoản đăng nhập cần quyền ghi vào folder để backup. Không cần đặt toàn bộ folder thành public. Không copy token vào terminal/source. Nếu thiếu package gdrive_fsspec, thêm qua Molab Packages panel.
+
+Nếu gdown ở bước 4 không có quyền tải và file ở ngay root folder với tên như ZIP cung cấp, sau khi xác nhận listing có đúng tên, dùng cell:
+
+```python
+legacy_fs.get('DDVC_CVPR2018_Masking_Molab_25E.zip', '/marimo/DDVC_CVPR2018_Masking_Molab_25E.zip')
+```
+
+Nếu listing cho tên khác thì dùng đúng tên thực tế. Không di chuyển/xoá ZIP đã upload.
+
+## 9. Bật backup — cell Molab
+
+```python
+import sys as _sys
+from pathlib import Path as _Path
+
+_legacy_work = _Path('/marimo/DDVC_CVPR2018_Molab')
+_sys.path.insert(0, str(_legacy_work / 'source' / 'tools'))
+from drive_backup import DriveBackup as _DriveBackup
+
+legacy_backup = _DriveBackup(
+    legacy_fs,
+    work=_legacy_work,
+    remote_root='runs/ddvc_cvpr2018_e25_b1',
+    interval=120,
+)
+legacy_backup.start()
+```
+
+Chỉ tạo một worker cho remote root này. Tất cả đường dẫn remote ở trên đều tương đối với folder ID của bạn. Backup nằm trong:
+
+```text
+Folder Drive 1JtVmVYfZYlxbcR96pKMhWqxODi2WkJZI/
+  ZIP code do bạn upload
+  runs/
+    ddvc_cvpr2018_e25_b1/
+      slot-0/
+      slot-1/
+```
+
+Hai slot lưu model-last/best, metric, config, refs, bank và logs. Một slot chỉ hoàn tất khi có READY.json; slot còn lại được giữ nếu upload lỗi. Không backup raw video features/HF cache/compiler vì tải lại được. Không thao tác với ZIP code ở root.
+
+```bash
+tail -n 40 -f /marimo/DDVC_CVPR2018_Molab/logs/drive_sync.log
+```
+
+Sau khi checkpoint upload xong phải có BACKUP_COMPLETE. Chưa có model-last thì worker chưa có checkpoint để upload. Cần đủ dung lượng cho 2 slot; upload có thể mất thời gian. Epoch đang dở chưa có mid-epoch checkpoint.
+
+## 10. Train full — terminal
+
+Chạy sau khi setup/smoke/prepare-full thành công và bật backup. Nên đợi run cũ kết thúc để tránh tranh GPU; launcher không tự dừng run khác.
 
 ```bash
 bash /marimo/DDVC_CVPR2018_Molab/source/tools/legacy_molab.sh train
 ```
 
-Không chạy song song với run cũ nếu muốn đo tốc độ/VRAM riêng và tránh tranh tài nguyên. Script không tự dừng run khác.
-`nohup` không giữ process sống khi cả runtime bị thu hồi.
+Lệnh khởi động background và lưu PID. Không chạy lại để tạo process thứ hai. Nohup không giữ process sống khi cả runtime bị thu hồi.
 
-## 7. Log và kết quả — đường dẫn đầy đủ
+## 11. Xem tiến độ và metric — đường dẫn đầy đủ
 
 ```bash
 tail -n 80 -f /marimo/DDVC_CVPR2018_Molab/logs/yc2_full_cvpr2018_e25_b1.log
 ```
 
-Ctrl+C chỉ thoát tail, không dừng train background.
+Ctrl+C chỉ thoát tail, không dừng train.
 
 ```bash
 bash /marimo/DDVC_CVPR2018_Molab/source/tools/legacy_molab.sh status
@@ -151,7 +226,7 @@ bash /marimo/DDVC_CVPR2018_Molab/source/tools/legacy_molab.sh status
 bash /marimo/DDVC_CVPR2018_Molab/source/tools/legacy_molab.sh report
 ```
 
-Run directory:
+Kết quả local:
 
 ```text
 /marimo/DDVC_CVPR2018_Molab/runs/yc2_full_cvpr2018_e25_b1/
@@ -163,27 +238,7 @@ Run directory:
   prediction/
 ```
 
-`info.json` lưu metric và history; best chọn theo METEOR + SODA_c. Evaluator YouCook2 trên validation tính CIDEr, METEOR, BLEU-4, SODA_c và localization scores theo code cũ. Prediction final khớp rerank/top-N; raw để debug.
-
-## 8. Backup Google Drive
-
-Dùng lại `fs` đã xác thực. Tạo handle riêng trong một cell (khác tên handle của run cũ):
-
-```python
-import sys as _sys
-from pathlib import Path as _Path
-_legacy_work = _Path('/marimo/DDVC_CVPR2018_Molab')
-_sys.path.insert(0, str(_legacy_work / 'source' / 'tools'))
-from drive_backup import DriveBackup as _DriveBackup
-legacy_backup = _DriveBackup(fs, work=_legacy_work, remote_root='DDVC_Molab/legacy_cvpr2018_e25_b1', interval=120)
-legacy_backup.start()
-```
-
-Chỉ tạo một worker cho remote root này. Backup 2 slot: checkpoint best/last, config, references, bank, metadata và logs. Một slot chỉ hoàn tất khi có READY.json; không đụng slot hoàn tất kia nếu upload lỗi. Không backup video features/HF cache/compiler vì tải lại được.
-
-```bash
-tail -n 40 -f /marimo/DDVC_CVPR2018_Molab/logs/drive_sync.log
-```
+Best chọn theo METEOR + SODA_c. `info.json` chứa metric history; validation tính CIDEr, METEOR, BLEU-4, SODA_c và localization scores theo evaluator cũ. Prediction final là sau rerank/top-N; raw để debug.
 
 Sau khi train xong, cell:
 
@@ -191,25 +246,28 @@ Sau khi train xong, cell:
 legacy_backup.sync_once(force=True)
 ```
 
-Đợi BACKUP_COMPLETE. Session có thể mất upload/epoch đang dở; checkpoint hiện ở boundary epoch, không mid-epoch.
+Đợi BACKUP_COMPLETE trước khi đóng runtime.
 
-## 9. Resume
+## 12. Resume
 
-Cùng runtime, sau khi xác nhận process cũ dừng:
+Cùng runtime: chỉ khi process cũ đã dừng:
 
 ```bash
 bash /marimo/DDVC_CVPR2018_Molab/source/tools/legacy_molab.sh resume
 ```
 
-Run bị lỗi trước checkpoint sẽ được giữ lại với suffix startup_failed khi chạy lại `train`; không xoá. Nếu đã có checkpoint thì `train` từ chối, phải dùng `resume`.
+Session mới:
 
-Session mới: giải nén/setup lại, kết nối fs và tạo legacy_backup như trên nhưng CHƯA gọi start. Sau đó cell:
+1. Tải/giải nén và setup lại khi cần.
+2. Kết nối `legacy_fs` bằng đúng folder ID ở bước 8.
+3. Tạo `legacy_backup` như bước 9 nhưng CHƯA gọi start.
+4. Cell restore:
 
 ```python
 legacy_backup.restore_latest()
 ```
 
-Terminal:
+5. Terminal:
 
 ```bash
 bash /marimo/DDVC_CVPR2018_Molab/source/tools/legacy_molab.sh restage
@@ -219,13 +277,12 @@ bash /marimo/DDVC_CVPR2018_Molab/source/tools/legacy_molab.sh restage
 bash /marimo/DDVC_CVPR2018_Molab/source/tools/legacy_molab.sh smoke-resume
 ```
 
-Phải có CHECKPOINT_LOAD_PASS và model smoke pass; bật lại `legacy_backup.start()` trong cell, rồi chạy `resume`.
-Không prepare đè config restore, không đổi epoch/batch/loss giữa run.
+6. Khi CHECKPOINT_LOAD_PASS và smoke thành công, bật `legacy_backup.start()` trong cell rồi chạy lệnh resume.
 
-Checkpoint Action-Aware/accumulation 8 không dùng để resume bản này. Checkpoint legacy cũ từ Kaggle không có đầy đủ format-2 scheduler/RNG cũng không được gọi là exact resume; bản này khởi tạo fresh để tái chạy recipe cũ 25 epoch.
+Không prepare đè config restore. Checkpoint Action-Aware/accumulation 8 không dùng để resume bản này. Checkpoint Kaggle legacy cũ không đủ format-2 scheduler/RNG cũng không được gọi là exact resume; đây là fresh run recipe legacy 25 epoch.
 
-## 10. Kiểm tra và giới hạn
+## 13. Kiểm tra và giới hạn
 
-Đã chạy CPU: actual legacy model matched forward/backward, mask gradients, generation/beam/cache, chunk equivalence, training checkpoint interruption/resume, config defaults, backup transport giả lập. Đối chiếu core source với archive gốc. Không tuyên bố đã train model này trên Molab GPU từ local; dùng các bước setup/smoke/train-smoke trên GPU để xác nhận.
+Đã chạy CPU: actual legacy model matched forward/backward, mask gradients, generation/beam/cache, chunk equivalence, training checkpoint interruption/resume, config defaults, backup transport giả lập. Đối chiếu core source với archive gốc. Không tuyên bố đã train model này trên Molab GPU từ local; dùng setup/smoke/train-smoke trên máy thật để xác nhận.
 
-GPU/Python/Torch mới có thể làm kết quả số khác Kaggle. Bản này giữ phương pháp legacy để so sánh, không tự bật các cải tiến mới hay hứa CIDEr tăng.
+Folder Drive được cấu hình đúng theo ID đã cung cấp nhưng hướng dẫn này không tự đăng nhập hay ghi vào Drive thay bạn. ZIP trên Drive vẫn là source c385e66; tài liệu external này cập nhật link mà không yêu cầu thay ZIP. Không hứa metric trùng Kaggle vì khác epoch budget, GPU và môi trường số học.
