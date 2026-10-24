@@ -52,8 +52,13 @@ def build_cuda(args):
     from torch.utils.cpp_extension import CUDA_HOME
     nvcc=Path(CUDA_HOME)/'bin/nvcc' if CUDA_HOME else None
     if not nvcc or not nvcc.exists():raise RuntimeError('CUDA development toolkit / nvcc missing. Do not start training; select a runtime with CUDA build tools.')
+    cccl=Path(CUDA_HOME)/'include/cccl'
+    if (cccl/'nv/target').is_file():
+        print('CUDA CCCL headers:',cccl,flush=True)
     major,minor=torch.cuda.get_device_capability(0)
     env=os.environ.copy();env.update(TORCH_CUDA_ARCH_LIST=f'{major}.{minor}',MAX_JOBS=str(args.jobs))
+    if (cccl/'nv/target').is_file():
+        env['CPATH']=str(cccl)+(os.pathsep+env['CPATH'] if env.get('CPATH') else '')
     print('Building for GPU',torch.cuda.get_device_name(0),'arch',env['TORCH_CUDA_ARCH_LIST'],flush=True)
     # Build locally: no root privileges, package installation or torchvision replacement.
     subprocess.run([sys.executable,'setup.py','build_ext','--inplace'],cwd=ROOT/'ddvc/ops',env=env,check=True,timeout=1800)

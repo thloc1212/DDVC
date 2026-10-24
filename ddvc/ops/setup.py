@@ -48,6 +48,11 @@ def get_extensions():
 
     sources = [os.path.join(extensions_dir, s) for s in sources]
     include_dirs = [extensions_dir]
+    # CUDA 13 relocates CCCL headers (including nv/target) below include/cccl.
+    if CUDA_HOME:
+        cccl_include = os.path.join(CUDA_HOME, "include", "cccl")
+        if os.path.isfile(os.path.join(cccl_include, "nv", "target")):
+            include_dirs.append(cccl_include)
     ext_modules = [
         extension(
             "MultiScaleDeformableAttention",
