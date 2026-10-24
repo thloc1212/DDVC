@@ -57,6 +57,10 @@ def build_cuda(args):
     print('Building for GPU',torch.cuda.get_device_name(0),'arch',env['TORCH_CUDA_ARCH_LIST'],flush=True)
     # Build locally: no root privileges, package installation or torchvision replacement.
     subprocess.run([sys.executable,'setup.py','build_ext','--inplace'],cwd=ROOT/'ddvc/ops',env=env,check=True,timeout=1800)
+    env['PYTHONPATH']=str(ROOT/'ddvc/ops')+os.pathsep+env.get('PYTHONPATH','')
+    subprocess.run([sys.executable,'-c',
+        'import torch; import MultiScaleDeformableAttention as op; print("EXTENSION_LOAD_PASS",op.__file__)'],
+        cwd=ROOT,env=env,check=True)
 
 def inspect_env(args):
     import torch

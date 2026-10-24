@@ -15,14 +15,21 @@ import torch.nn.functional as F
 from torch.autograd import Function
 from torch.autograd.function import once_differentiable
 
+_MSDA_IMPORT_ERROR = None
 try:
     import MultiScaleDeformableAttention as MSDA
-except:
-    pass
+except (ImportError, OSError) as exc:
+    MSDA = None
+    _MSDA_IMPORT_ERROR = exc
 
 class MSDeformAttnFunction(Function):
     @staticmethod
     def forward(ctx, value, value_spatial_shapes, value_level_start_index, sampling_locations, attention_weights, im2col_step):
+        if MSDA is None:
+            raise RuntimeError(
+                'Cannot load MultiScaleDeformableAttention. Build ddvc/ops for this Python/Torch/CUDA '
+                'and put ddvc/ops on PYTHONPATH. The original import error is chained below.'
+            ) from _MSDA_IMPORT_ERROR
         # sampling_locations:(...,2), the first item of last dim means x axis corresponding to w, and second item of the last dim means y, corresponding to h.
         ctx.im2col_step = im2col_step
         output = MSDA.ms_deform_attn_forward(
