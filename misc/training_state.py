@@ -69,15 +69,18 @@ def schedule_contrastive(weight_dict, epoch, times, values, corrected=False):
     return value
 
 
-def snapshot(model, optimizer, scheduler, epoch, iteration, info, config, phase):
+def snapshot(model, optimizer, scheduler, epoch, iteration, info, config, phase, optimizer_steps=0):
     return dict(format_version=2, epoch=epoch,
                 next_epoch=epoch + (phase == 'epoch_complete'), phase=phase,
-                iteration=iteration, model=model.state_dict(), optimizer=optimizer.state_dict(),
+                iteration=iteration, optimizer_steps=optimizer_steps,
+                model=model.state_dict(), optimizer=optimizer.state_dict(),
                 scheduler=scheduler.state_dict(), rng=capture_rng(),
                 info=plain_metadata(info), config=plain_metadata(config))
 
 
 def validate_resume(config, previous):
+    if config.get('gradient_accumulation_steps', 1) != previous.get('gradient_accumulation_steps', 1):
+        raise ValueError('Resume effective batch changed; start a new run for a batch ablation.')
     # Paths can change when restoring Kaggle outputs, but architecture/data recipe must not.
     keys = ('hidden_dim', 'num_queries', 'gpt_layer', 'dec_layers', 'enc_layers',
             'learned_proposal_mask', 'local_visual_attention', 'proposal_mask_bins',

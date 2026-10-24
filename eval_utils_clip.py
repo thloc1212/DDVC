@@ -195,6 +195,8 @@ def evaluate(model,memory_bank,criterion,contrastive_criterion, postprocessors, 
 
 
             output, loss = model(dt, criterion, contrastive_criterion, opt.transformer_input_type,memory_bank, eval_mode=True,sent_embedder=sent_embedder,gt_bank=gt_bank)
+            if logger is not None and (len_check == 1 or len_check % max(1,getattr(opt,'progress_log_every',10)) == 0 or len_check == len(loader)):
+                logger.info('VALIDATION_PROGRESS batches=%d/%d',len_check,len(loader))
             orig_target_sizes = dt['video_length'][:, 1]
 
             weight_dict = criterion.weight_dict

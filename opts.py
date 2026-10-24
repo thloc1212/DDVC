@@ -151,6 +151,9 @@ def parse_opts():
                         help='Negative disables pruning; otherwise keep weights>threshold OR predicted context window')
     parser.add_argument('--corrected_query_contrastive', action='store_true', default=False)
     parser.add_argument('--data_signature', type=str, default='')
+    parser.add_argument('--gradient_accumulation_steps', type=int, default=1)
+    parser.add_argument('--progress_log_every', type=int, default=10)
+    parser.add_argument('--fixed_run_id', action='store_true', default=False)
     parser.add_argument('--local_visual_attention', action='store_true', default=False,
                         help='Caption each event using its predicted temporal interval')
     parser.add_argument('--local_visual_context_ratio', type=float, default=0.1,

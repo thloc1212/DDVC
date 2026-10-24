@@ -31,20 +31,23 @@ def main():
     tree=ast.parse((Path(__file__).parent/'train.py').read_text(encoding='utf8'))
     train_fn=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='train')
     class Dataset:
+        length=2
         translator=None
         def __init__(self,*a):pass
-        def __len__(self):return 2
+        def __len__(self):return self.length
         def __getitem__(self,i):return dict(x=torch.tensor(float(i+1)),video_target=[])
     class Writer:
         def __init__(self,*a):pass
         def add_scalar(self,*a):pass
         def close(self):pass
-    steps=[]; evaluations=[]; fail=[False]
+    steps=[]; evaluations=[]; fail=[False]; records=[]
     class Model(nn.Module):
         def __init__(self):super().__init__();self.p=nn.Parameter(torch.randn(()))
         def forward(self,dt,*a):
             steps.append(1)
-            return {},{'loss_ce':(self.p*dt['x'].mean()-torch.rand(()))**2}
+            x,y=dt['x'].mean(),torch.rand(())
+            records.append((x.detach(),y.detach()))
+            return {},{'loss_ce':(self.p*x-y)**2}
     def build(opt):
         return Model(),SimpleNamespace(weight_dict={'loss_ce':1.},matcher=SimpleNamespace(cost_cl=0)),None,None
     def evaluate(*a,**kw):
@@ -109,6 +112,25 @@ def main():
         state=capture_rng();wanted=(random.random(),np.random.rand(),torch.rand(()))
         restore_rng(state);got=(random.random(),np.random.rand(),torch.rand(()))
         assert wanted[0]==got[0] and wanted[1]==got[1] and wanted[2]==got[2]
+        # The actual loop must average both full windows and the final partial window.
+        Dataset.length=5;records.clear();steps.clear();evaluations.clear()
+        original_adam=optim.Adam
+        class CheckedAdam(original_adam):
+            def step(self,*args,**kwargs):
+                param=self.param_groups[0]['params'][0]
+                expected=torch.stack([2*(param.detach()*x-y)*x for x,y in records]).mean()
+                expected=expected*min(1.,defaults['grad_clip']/(expected.abs().item()+1e-6))
+                torch.testing.assert_close(param.grad,expected,rtol=1e-5,atol=1e-6)
+                records.clear()
+                return super().step(*args,**kwargs)
+        optim.Adam=CheckedAdam
+        try:
+            accumulated=SimpleNamespace(**defaults,gradient_accumulation_steps=3,save_dir=str(Path(tmp)/'accumulated'))
+            namespace['train'](accumulated)
+            state=torch.load(Path(accumulated.save_dir)/'run/model-last.pth',weights_only=False)
+            assert state['optimizer_steps']==6 and len(steps)==15 and not records
+        finally:
+            optim.Adam=original_adam
     print('PASS: actual train loop with evaluator lambda-defaultdict metrics, nested metadata, failed-save protection, validation interruption/resume, no repeated epoch, exact model/scheduler/RNG continuity')
 
 

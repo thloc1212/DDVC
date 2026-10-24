@@ -38,12 +38,18 @@ from misc.training_state import (atomic_save, capture_rng, restore_rng, snapshot
 # global clip_gt
 def train(opt):
     set_seed(opt.seed)
+    accumulation = getattr(opt, 'gradient_accumulation_steps', 1)
+    log_every = getattr(opt, 'progress_log_every', 10)
+    if accumulation < 1 or log_every < 1:
+        raise ValueError('gradient_accumulation_steps and progress_log_every must be positive')
+    if opt.debug and accumulation > 1:
+        raise ValueError('Use smoke data with debug=False when testing gradient accumulation')
     
     current_time = time.localtime()
     hour = current_time.tm_hour
     minute = current_time.tm_min
     second = current_time.tm_sec
-    if not opt.random_seed:
+    if not opt.random_seed and not getattr(opt, 'fixed_run_id', False):
         try:
             opt.id = opt.id+'_'+opt.exp_name #for batch training
         except:
@@ -91,6 +97,7 @@ def train(opt):
 
     epoch = model_pth['next_epoch'] if model_pth else 0
     iteration = model_pth['iteration'] if model_pth else 0
+    optimizer_steps = model_pth.get('optimizer_steps', iteration) if model_pth else 0
     best_val_score = saved_info.get('best', {}).get('best_val_score', -1e5)
     val_result_history = saved_info['history'].get('val_result_history', {})
     loss_history = saved_info['history'].get('loss_history', {})
@@ -183,6 +190,11 @@ def train(opt):
         criterion.matcher.cost_cl = 0 if cl_weight == 0 else opt.set_cost_cl
         logger.info('Epoch %s effective loss weights: %s', epoch, weight_dict)
         saved_this_epoch, new_best = False, False
+        epoch_start = time.time()
+        logger.info('EPOCH_START epoch=%d/%d videos=%d micro_batch=%d accumulation=%d effective_batch=%d resume_validation=%s',
+                    epoch+1, opt.epoch, len(train_dataset), opt.batch_size, accumulation,
+                    opt.batch_size*accumulation, resume_pending_validation)
+        optimizer.zero_grad(set_to_none=True)
 
         if opt.save_mode:
             save_vid_features=[]
@@ -190,7 +202,7 @@ def train(opt):
 
         # opt.debug=True
         # Batch-level iteration
-        for dt in tqdm([] if resume_pending_validation else train_loader, disable=opt.disable_tqdm):
+        for batch_index, dt in enumerate(tqdm([] if resume_pending_validation else train_loader, disable=opt.disable_tqdm)):
             if opt.device=='cuda':
                 torch.cuda.synchronize(opt.device)
             if opt.debug:
@@ -200,7 +212,6 @@ def train(opt):
                     break
             iteration += 1
 
-            optimizer.zero_grad()
             dt = {key: _.to(opt.device) if isinstance(_, torch.Tensor) else _ for key, _ in dt.items()}
             dt['video_target'] = [
                 {key: _.to(opt.device) if isinstance(_, torch.Tensor) else _ for key, _ in vid_info.items()} for vid_info in
@@ -216,10 +227,21 @@ def train(opt):
                 output, loss = model(dt, criterion,contrastive_criterion, opt.transformer_input_type,memory_bank)
             
             final_loss = sum(loss[k] * weight_dict[k] for k in loss.keys() if k in weight_dict)
-            final_loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), opt.grad_clip)
-
-            optimizer.step()
+            # Normalize each accumulation window by its actual video count, including the final partial window.
+            window_start = (batch_index // accumulation) * accumulation
+            window_length = min(accumulation, len(train_loader) - window_start)
+            (final_loss / window_length).backward()
+            if (batch_index + 1) % accumulation == 0 or batch_index + 1 == len(train_loader):
+                torch.nn.utils.clip_grad_norm_(model.parameters(), opt.grad_clip)
+                optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
+                optimizer_steps += 1
+            if batch_index == 0 or (batch_index + 1) % log_every == 0 or batch_index + 1 == len(train_loader):
+                elapsed = time.time() - epoch_start
+                eta = elapsed / (batch_index + 1) * (len(train_loader) - batch_index - 1)
+                logger.info('PROGRESS epoch=%d/%d micro_batch=%d/%d optimizer_steps=%d loss=%.5f lr=%.8g elapsed_s=%.1f eta_epoch_s=%.1f',
+                            epoch+1,opt.epoch,batch_index+1,len(train_loader),optimizer_steps,
+                            final_loss.item(),optimizer.param_groups[0]['lr'],elapsed,eta)
 
             for loss_k,loss_v in loss.items():
                 loss_sum[loss_k] = loss_sum.get(loss_k, 0)+ loss_v.item()
@@ -258,12 +280,13 @@ def train(opt):
 
             # Save model
             saved_pth = snapshot(model, optimizer, lr_scheduler, epoch, iteration,
-                                 saved_info, vars(opt), 'validation_pending')
+                                 saved_info, vars(opt), 'validation_pending', optimizer_steps=optimizer_steps)
             checkpoint_path = os.path.join(save_folder, 'model-last.pth')
             atomic_save(saved_pth, checkpoint_path)
             saved_this_epoch = True
 
             model.eval()
+            logger.info('VALIDATION_START epoch=%d/%d videos=%d', epoch+1, opt.epoch, len(val_dataset))
             result_json_path = os.path.join(save_folder, 'prediction',
                                          'num{}_epoch{}.json'.format(
                                              len(val_dataset), epoch))
@@ -337,12 +360,14 @@ def train(opt):
         if saved_this_epoch:
             # One self-contained state: model, optimizer, next-epoch scheduler, RNG and metadata.
             complete = snapshot(model, optimizer, lr_scheduler, completed_epoch, iteration,
-                                saved_info, vars(opt), 'epoch_complete')
+                                saved_info, vars(opt), 'epoch_complete', optimizer_steps=optimizer_steps)
             atomic_save(complete, checkpoint_path)
             if new_best:
                 atomic_save(complete, os.path.join(save_folder, 'model-best.pth'))
             if opt.save_all_checkpoint:
                 atomic_save(complete, os.path.join(save_folder, 'model_epoch_{}.pth'.format(completed_epoch)))
+            logger.info('EPOCH_COMPLETE epoch=%d/%d optimizer_steps=%d checkpoint=%s',
+                        completed_epoch+1,opt.epoch,optimizer_steps,checkpoint_path)
         torch.cuda.empty_cache()
         # Stop criterion
         if epoch >= opt.epoch:
