@@ -1144,10 +1144,10 @@ class CM2(nn.Module):
             return cap_loss, cap_probs, seq ,cap_cl_loss
 
         cap_id, query_id = cap_bigids, feat_bigids
-        cost_caption = hs_r.new_zeros((max(query_id) + 1, max(cap_id) + 1))
-        cost_caption[query_id, cap_id] = cap_cost
-        loss_caption = hs_r.new_zeros((max(query_id) + 1, max(cap_id) + 1))
-        loss_caption[query_id, cap_id] = cap_loss
+        cost_caption = torch.zeros((max(query_id) + 1, max(cap_id) + 1),device=hs_r.device,dtype=torch.float32)
+        cost_caption[query_id, cap_id] = cap_cost.float()
+        loss_caption = torch.zeros((max(query_id) + 1, max(cap_id) + 1),device=hs_r.device,dtype=torch.float32)
+        loss_caption[query_id, cap_id] = cap_loss.float()
         cost_caption = cost_caption.reshape(-1, N_q,
                                             max(cap_id) + 1)  # batch_size * num_queries * all_caption_num
         loss_caption = loss_caption.reshape(-1, N_q, max(cap_id) + 1)
@@ -1286,10 +1286,10 @@ class CM2(nn.Module):
             return cap_cost,cap_loss, cap_probs, seq
 
         cap_id, query_id = cap_bigids, feat_bigids
-        cost_caption = hs_r.new_zeros((max(query_id) + 1, max(cap_id) + 1))
-        cost_caption[query_id, cap_id] = cap_cost
-        loss_caption = hs_r.new_zeros((max(query_id) + 1, max(cap_id) + 1))
-        loss_caption[query_id, cap_id] = cap_loss
+        cost_caption = torch.zeros((max(query_id) + 1, max(cap_id) + 1),device=hs_r.device,dtype=torch.float32)
+        cost_caption[query_id, cap_id] = cap_cost.float()
+        loss_caption = torch.zeros((max(query_id) + 1, max(cap_id) + 1),device=hs_r.device,dtype=torch.float32)
+        loss_caption[query_id, cap_id] = cap_loss.float()
         cost_caption = cost_caption.reshape(-1, N_q,
                                             max(cap_id) + 1)  # batch_size * num_queries * all_caption_num
         loss_caption = loss_caption.reshape(-1, N_q, max(cap_id) + 1)
@@ -1389,9 +1389,9 @@ class PostProcess(nn.Module):
         all_boxes[all_boxes > 1] = 1
         scale_fct = torch.stack([target_sizes, target_sizes], dim=1)
         all_boxes = all_boxes * scale_fct[:, None, :]
-        all_boxes = all_boxes.cpu().numpy().tolist()
+        all_boxes = all_boxes.float().cpu().numpy().tolist()
 
-        all_logits = outputs['pred_logits'].sigmoid().cpu().numpy().tolist()
+        all_logits = outputs['pred_logits'].sigmoid().float().cpu().numpy().tolist()
         outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs' and k != 'enc_outputs'}
         last_indices,_,C = self.grounding_matcher(outputs_without_aux, targets, return_C=True)
 
@@ -1470,12 +1470,12 @@ class PostProcess(nn.Module):
             caps = caps_new
             mask = outputs['caption_probs']['gen_mask']
             cap_prob = outputs['caption_probs']['cap_prob_eval']
-            cap_scores = (mask * cap_prob).sum(2).cpu().numpy().astype('float')
+            cap_scores = (mask * cap_prob).sum(2).float().cpu().numpy().astype('float')
             caps = [[caps[batch][idx] for q_id, idx in enumerate(b)] for batch, b in enumerate(topk_boxes)]
         else:
             if len(seq):
                 mask = (seq > 0).float()
-                cap_scores = outputs['caption_probs']['cap_prob_eval_score'].cpu().numpy().astype('float')
+                cap_scores = outputs['caption_probs']['cap_prob_eval_score'].float().cpu().numpy().astype('float')
                 seq = seq.detach().cpu().numpy().astype('int')  # (eseq_batch_size, eseq_len, cap_len)
                 caps = [[loader.dataset.tokenizer.decode(s,skip_special_tokens =True).split(":")[-1].split('.')[0].lower().strip()+"." for s in s_vid] for s_vid in seq]
                 caps = [[caps[batch][idx] for q_id, idx in enumerate(b)] for batch, b in enumerate(topk_boxes)]
@@ -1507,7 +1507,7 @@ class PostProcess(nn.Module):
             sizes = [num_queries] * bs
             cl_pre_logit = [torch.eq(m.split(sizes, 0)[i].argmax(dim=1), topk_indexes[i]).sum() for i, m in enumerate(cl_logits.split(sizes, 1))]
             cl_scores = [torch.gather(m.split(sizes, 0)[i], 1, topk_indexes[i].unsqueeze(1)).squeeze(1) for i, m in enumerate(cl_logits.split(sizes, 1))]
-            cl_scores = [cl_score.cpu().numpy().astype('float') for cl_score in cl_scores]
+            cl_scores = [cl_score.float().cpu().numpy().astype('float') for cl_score in cl_scores]
         else:
             cl_scores = [[0.0] * num_queries] * bs
 

@@ -18,7 +18,7 @@ from torch import nn
 import torch.nn.functional as F
 from torch.nn.init import xavier_uniform_, constant_
 
-from ..functions import MSDeformAttnFunction, ms_deform_attn_core_pytorch
+from ..functions import MSDeformAttnFunction, ms_deform_attn_core_pytorch, ms_deform_attn_safe
 
 
 def _is_power_of_2(n):
@@ -117,7 +117,7 @@ class MSDeformAttn(nn.Module):
             input_spatial_shapes = torch.stack([input_spatial_shapes.new_ones(input_spatial_shapes.shape), input_spatial_shapes], -1)
 
         if query.device.type == 'cuda':
-            output = MSDeformAttnFunction.apply(
+            output = ms_deform_attn_safe(
                 value, input_spatial_shapes, input_level_start_index, sampling_locations, attention_weights,
                 self.im2col_step)
         else:

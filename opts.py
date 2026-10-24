@@ -154,6 +154,9 @@ def parse_opts():
     parser.add_argument('--gradient_accumulation_steps', type=int, default=1)
     parser.add_argument('--progress_log_every', type=int, default=10)
     parser.add_argument('--fixed_run_id', action='store_true', default=False)
+    parser.add_argument('--precision', choices=['fp32','bf16'], default='fp32')
+    parser.add_argument('--allow_tf32', action='store_true', default=False)
+    parser.add_argument('--pin_memory', action='store_true', default=False)
     parser.add_argument('--local_visual_attention', action='store_true', default=False,
                         help='Caption each event using its predicted temporal interval')
     parser.add_argument('--local_visual_context_ratio', type=float, default=0.1,

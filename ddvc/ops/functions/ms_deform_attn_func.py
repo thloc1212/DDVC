@@ -36,14 +36,25 @@ class MSDeformAttnFunction(Function):
         value, value_spatial_shapes, value_level_start_index, sampling_locations, attention_weights = ctx.saved_tensors
         grad_value, grad_sampling_loc, grad_attn_weight = \
             MSDA.ms_deform_attn_backward(
-                value, value_spatial_shapes, value_level_start_index, sampling_locations, attention_weights, grad_output, ctx.im2col_step)
+                value, value_spatial_shapes, value_level_start_index, sampling_locations, attention_weights, grad_output.contiguous(), ctx.im2col_step)
 
         return grad_value, None, None, grad_sampling_loc, grad_attn_weight, None
+
+
+def ms_deform_attn_safe(value, shapes, level_start_index, locations, weights, im2col_step):
+    """FP32 island around the legacy extension; casts remain in the autograd graph."""
+    dtype=torch.float64 if value.dtype==torch.float64 else torch.float32
+    with torch.autocast(device_type=value.device.type,enabled=False):
+        return MSDeformAttnFunction.apply(value.to(dtype).contiguous(),shapes,level_start_index,
+            locations.to(dtype).contiguous(),weights.to(dtype).contiguous(),im2col_step)
 
 
 def ms_deform_attn_core_pytorch(value, value_spatial_shapes, sampling_locations, attention_weights, return_value=False):
     # for debug and test only,
     # need to use cuda version instead
+    if value.dtype in (torch.float16,torch.bfloat16):value=value.float()
+    sampling_locations=sampling_locations.to(value.dtype)
+    attention_weights=attention_weights.to(value.dtype)
     N_, S_, M_, D_ = value.shape    # N_: batch size , S_: \sum_H*W, M_ : head number, D_: feature dim of each head
 
     _, Lq_, M_, L_, P_, _ = sampling_locations.shape  # Lq_: \sum H*W, L_: multi-scale number, P_: number of sampled key points

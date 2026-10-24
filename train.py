@@ -34,10 +34,12 @@ from collections import OrderedDict
 from ret_utils import load_clip_memory_bank, load_clip_gt
 from misc.training_state import (atomic_save, capture_rng, restore_rng, snapshot,
                                  schedule_contrastive, validate_resume)
+from misc.runtime_perf import amp_context,configure_runtime,vram_metrics,append_performance
 
 # global clip_gt
 def train(opt):
     set_seed(opt.seed)
+    runtime=configure_runtime(opt)
     accumulation = getattr(opt, 'gradient_accumulation_steps', 1)
     log_every = getattr(opt, 'progress_log_every', 10)
     if accumulation < 1 or log_every < 1:
@@ -57,6 +59,7 @@ def train(opt):
     print('Rename opt.id as "{}".'.format(opt.id))
     save_folder = build_floder(opt)
     logger = create_logger(save_folder, 'train.log')
+    logger.info('RUNTIME %s',runtime)
     tf_writer = SummaryWriter(os.path.join(save_folder, 'tf_summary'))
 
     if not opt.start_from:
@@ -90,10 +93,14 @@ def train(opt):
                                  opt)
 
     train_loader = DataLoader(train_dataset, batch_size=opt.batch_size,
-                              shuffle=True, num_workers=opt.nthreads, collate_fn=collate_fn)
+                              shuffle=True, num_workers=opt.nthreads, collate_fn=collate_fn,
+                              pin_memory=getattr(opt,'pin_memory',False),
+                              prefetch_factor=2 if opt.nthreads>0 else None)
 
     val_loader = DataLoader(val_dataset, batch_size=opt.batch_size_for_eval,
-                            shuffle=False, num_workers=opt.nthreads, collate_fn=collate_fn)
+                            shuffle=False, num_workers=opt.nthreads, collate_fn=collate_fn,
+                            pin_memory=getattr(opt,'pin_memory',False),
+                            prefetch_factor=2 if opt.nthreads>0 else None)
 
     epoch = model_pth['next_epoch'] if model_pth else 0
     iteration = model_pth['iteration'] if model_pth else 0
@@ -191,6 +198,7 @@ def train(opt):
         logger.info('Epoch %s effective loss weights: %s', epoch, weight_dict)
         saved_this_epoch, new_best = False, False
         epoch_start = time.time()
+        if opt.device=='cuda':torch.cuda.reset_peak_memory_stats()
         logger.info('EPOCH_START epoch=%d/%d videos=%d micro_batch=%d accumulation=%d effective_batch=%d resume_validation=%s',
                     epoch+1, opt.epoch, len(train_dataset), opt.batch_size, accumulation,
                     opt.batch_size*accumulation, resume_pending_validation)
@@ -203,8 +211,6 @@ def train(opt):
         # opt.debug=True
         # Batch-level iteration
         for batch_index, dt in enumerate(tqdm([] if resume_pending_validation else train_loader, disable=opt.disable_tqdm)):
-            if opt.device=='cuda':
-                torch.cuda.synchronize(opt.device)
             if opt.debug:
                 # each epoch contains less mini-batches for debugging
                 if (iteration + 1) % 5 == 0:
@@ -212,9 +218,9 @@ def train(opt):
                     break
             iteration += 1
 
-            dt = {key: _.to(opt.device) if isinstance(_, torch.Tensor) else _ for key, _ in dt.items()}
+            dt = {key: _.to(opt.device,non_blocking=getattr(opt,'pin_memory',False)) if isinstance(_, torch.Tensor) else _ for key, _ in dt.items()}
             dt['video_target'] = [
-                {key: _.to(opt.device) if isinstance(_, torch.Tensor) else _ for key, _ in vid_info.items()} for vid_info in
+                {key: _.to(opt.device,non_blocking=getattr(opt,'pin_memory',False)) if isinstance(_, torch.Tensor) else _ for key, _ in vid_info.items()} for vid_info in
                 dt['video_target']]
 
             dt = collections.defaultdict(lambda: None, dt)
@@ -224,9 +230,11 @@ def train(opt):
                 save_vid_features.append(encoded_feature.detach().cpu())
                 continue
             else:
-                output, loss = model(dt, criterion,contrastive_criterion, opt.transformer_input_type,memory_bank)
+                with amp_context(opt):
+                    output, loss = model(dt, criterion,contrastive_criterion, opt.transformer_input_type,memory_bank)
             
-            final_loss = sum(loss[k] * weight_dict[k] for k in loss.keys() if k in weight_dict)
+            final_loss = sum(loss[k].float() * weight_dict[k] for k in loss.keys() if k in weight_dict)
+            if not torch.isfinite(final_loss):raise RuntimeError('Non-finite training loss; stopping before optimizer update')
             # Normalize each accumulation window by its actual video count, including the final partial window.
             window_start = (batch_index // accumulation) * accumulation
             window_length = min(accumulation, len(train_loader) - window_start)
@@ -247,8 +255,6 @@ def train(opt):
                 loss_sum[loss_k] = loss_sum.get(loss_k, 0)+ loss_v.item()
             loss_sum['total_loss'] = loss_sum.get('total_loss', 0) + final_loss.item()
 
-            if opt.device=='cuda':
-                torch.cuda.synchronize()
 
             losses_log_every = max(1, int(len(train_loader) / 3))
 
@@ -275,6 +281,13 @@ def train(opt):
                 bad_video_num = 0
                 torch.cuda.empty_cache()
 
+        if not resume_pending_validation:
+            train_seconds=time.time()-epoch_start
+            perf=dict(phase='train',epoch=epoch,train_seconds=train_seconds,
+                      videos_per_second=len(train_dataset)/max(train_seconds,1e-6),
+                      optimizer_steps=optimizer_steps,precision=getattr(opt,'precision','fp32'),**vram_metrics(opt.device))
+            append_performance(save_folder,perf)
+            logger.info('TRAIN_PERFORMANCE %s',perf)
         # evaluation
         if (epoch % opt.save_checkpoint_every == 0) and (epoch >= opt.min_epoch_when_save):
 

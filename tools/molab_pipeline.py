@@ -63,6 +63,9 @@ def inspect_env(args):
     print(json.dumps({'python':sys.executable,'version':sys.version,'torch':torch.__version__,
         'torch_cuda':torch.version.cuda,'cuda':torch.cuda.is_available(),
         'gpu':torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+        'vram_gib':torch.cuda.get_device_properties(0).total_memory/2**30 if torch.cuda.is_available() else None,
+        'compute_capability':torch.cuda.get_device_capability(0) if torch.cuda.is_available() else None,
+        'compiled_arches':torch.cuda.get_arch_list() if torch.cuda.is_available() else [],
         'nvcc':shutil.which('nvcc'),'java':shutil.which('java'),'source':revision()},indent=2))
     if not torch.cuda.is_available():raise RuntimeError('Selected interpreter has no CUDA GPU')
 
@@ -113,7 +116,9 @@ def smoke(args):
     opt=SimpleNamespace(**yaml.safe_load(Path(args.config).read_text()));opt.rec_encdec=True
     if not torch.cuda.is_available():raise RuntimeError('CUDA unavailable')
     ds=PropSeqDataset(opt.train_caption_file,opt.visual_feature_folder,opt.dict_file,True,'gt',opt)
-    model,criterion,contrastive,_=build(opt);model.translator=ds.translator;model.to(opt.device)
+    from misc.runtime_perf import configure_runtime,amp_context,vram_metrics
+    print('RUNTIME',configure_runtime(opt),flush=True)
+    model,criterion,contrastive,postprocessors=build(opt);model.translator=ds.translator;model.to(opt.device)
     if args.checkpoint:
         cp=torch.load(args.checkpoint,map_location='cpu',weights_only=False)
         validate_resume(vars(opt),cp['config']);model.load_state_dict(cp['model'],strict=True)
@@ -126,11 +131,34 @@ def smoke(args):
     dt['video_target']=[{k:v.to(opt.device) if isinstance(v,torch.Tensor) else v for k,v in t.items()} for t in dt['video_target']]
     dt=collections.defaultdict(lambda:None,dt)
     schedule_contrastive(criterion.weight_dict,0,opt.cl_schedule_time,opt.cl_schedule_val,opt.corrected_query_contrastive)
-    model.train();output,loss=model(dt,criterion,contrastive,opt.transformer_input_type,bank)
-    total=sum(v*criterion.weight_dict[k] for k,v in loss.items() if k in criterion.weight_dict)
-    if not torch.isfinite(total):raise RuntimeError('Non-finite smoke loss')
-    total.backward()
-    print('REAL_MODEL_FORWARD_BACKWARD_PASS',float(total.detach()),'peak_GB',torch.cuda.max_memory_allocated()/2**30,flush=True)
+    if args.benchmark_steps<1:raise ValueError('benchmark-steps must be positive')
+    model.train();torch.cuda.reset_peak_memory_stats();timings=[]
+    for step in range(args.benchmark_steps+1):
+        model.zero_grad(set_to_none=True);torch.cuda.synchronize();started=time.perf_counter()
+        with amp_context(opt):
+            output,loss=model(dt,criterion,contrastive,opt.transformer_input_type,bank)
+            total=sum(v.float()*criterion.weight_dict[k] for k,v in loss.items() if k in criterion.weight_dict)
+        if not torch.isfinite(total):raise RuntimeError('Non-finite smoke loss')
+        total.backward()
+        if any(not torch.isfinite(p.grad).all() for p in model.parameters() if p.grad is not None):
+            raise RuntimeError('Non-finite smoke gradients')
+        torch.cuda.synchronize();elapsed=time.perf_counter()-started
+        if step:timings.append(elapsed)
+        print('SMOKE_STEP',step,'loss',float(total.detach()),'seconds',elapsed,flush=True)
+        del output,loss,total
+    model.zero_grad(set_to_none=True);model.eval()
+    with torch.no_grad(),amp_context(opt):
+        output,loss=model(dt,criterion,contrastive,opt.transformer_input_type,bank,eval_mode=True)
+    loader=DataLoader(ds,batch_size=1,num_workers=0,collate_fn=collate_fn)
+    postprocessors['bbox'](output,dt['video_length'][:,1],loader,model,None)
+    postprocessors['bbox'].forward_grounding(output,dt['video_length'][:,1],dt['video_target'])
+    report=dict(precision=opt.precision,benchmark_steps=args.benchmark_steps,
+                mean_forward_backward_seconds=sum(timings)/len(timings),
+                benchmark='same training video, no optimizer update; excludes first warmup',**vram_metrics(opt.device))
+    dest=Path(args.config).parent/'smoke_performance.json';dest.write_text(json.dumps(report,indent=2))
+    print('REAL_MODEL_FORWARD_BACKWARD_PASS',json.dumps(report),flush=True)
+    print('GENERATION_POSTPROCESS_PASS',dest,flush=True)
+
 
 def resume_config(args):
     import yaml
@@ -145,6 +173,8 @@ def report(args):
     print('Run:',run)
     for name in ['model-last.pth','model-best.pth','info.json']:
         p=run/name;print(name,p.stat().st_size if p.exists() else 'missing')
+    perf=run/'performance.jsonl'
+    if perf.exists() and perf.stat().st_size:print('Latest performance:',perf.read_text().splitlines()[-1])
     p=run/'info.json'
     if p.exists():
         info=json.loads(p.read_text());best=info.get('best',{})
@@ -152,7 +182,23 @@ def report(args):
         for epoch,row in info.get('history',{}).get('val_result_history',{}).items():
             print('epoch',epoch,json.dumps(row.get('eval_score',{})))
 
+def resolve_profile(args):
+    rtx=args.hardware_profile=='rtx-pro-6000'
+    defaults=dict(accumulation=8 if rtx else 4,precision='bf16' if rtx else 'fp32',
+                  caption_chunk=64 if rtx else 16,workers=2 if rtx else 0,
+                  bank_batch=128 if rtx else 64,allow_tf32=rtx,pin_memory=rtx)
+    for key,value in defaults.items():
+        if getattr(args,key,None) is None:setattr(args,key,value)
+    if min(args.accumulation,args.caption_chunk,args.bank_batch)<1 or args.workers<0:
+        raise ValueError('Invalid throughput profile sizes')
+    return args
+
+
 def prepare(args):
+    resolve_profile(args)
+    from types import SimpleNamespace
+    from misc.runtime_perf import configure_runtime
+    print("RUNTIME_PREFLIGHT",configure_runtime(SimpleNamespace(device="cuda",precision=args.precision,allow_tf32=args.allow_tf32)),flush=True)
     import torch
     import re
     if not re.fullmatch(r'[A-Za-z0-9_-]+',args.run_name):raise ValueError('Use a simple run-name: letters, digits, underscores, hyphens')
@@ -187,7 +233,6 @@ def prepare(args):
     import numpy as np
     np.random.seed(SEED)
     import json, tarfile, requests
-    from pathlib import Path
 
     DATA_ROOT.mkdir(parents=True, exist_ok=True)
 
@@ -342,8 +387,8 @@ def prepare(args):
     model_clip,_=clip.load('ViT-L/14',device='cuda:0',jit=False); model_clip.eval()
     encoded=[]
     with torch.inference_mode():
-        for j in range(0,len(sentences),64):
-            tokens=clip.tokenize(sentences[j:j+64],truncate=True).to('cuda:0')
+        for j in range(0,len(sentences),args.bank_batch):
+            tokens=clip.tokenize(sentences[j:j+args.bank_batch],truncate=True).to('cuda:0')
             encoded.append(model_clip.encode_text(tokens).float().cpu())
             print('BANK_PROGRESS encoded',min(j+64,len(sentences)),'/',len(sentences),flush=True)
     emb=torch.cat(encoded).numpy()
@@ -372,7 +417,7 @@ def prepare(args):
      'dict_file':str(vocab_path),'vocab_size':len(word_to_ix),
      'bank_path':str(PREPARED/'bank'),'bank_folder':'clip','able_ret':True,
      'gpu_id':[0],'device':'cuda','batch_size':1,'batch_size_for_eval':1,
-     'nthreads':0,'fixed_run_id':True,'gradient_accumulation_steps':args.accumulation,'progress_log_every':args.log_every,'epoch':EPOCHS,'min_epoch_when_save':0,'save_checkpoint_every':1,
+     'nthreads':args.workers,'pin_memory':args.pin_memory,'precision':args.precision,'allow_tf32':args.allow_tf32,'hardware_profile':args.hardware_profile,'fixed_run_id':True,'gradient_accumulation_steps':args.accumulation,'progress_log_every':args.log_every,'epoch':EPOCHS,'min_epoch_when_save':0,'save_checkpoint_every':1,
      'save_all_checkpoint':False,'save_dir':SAVE_DIR,'id':RUN_ID,
      'exp_name':f'{RUN_MODE}{len(train)}_e{EPOCHS}_{MASK_MODE}_mask_'+time.strftime('%Y%m%d_%H%M%S'),'start_from':RESUME_RUN_ID,'start_from_mode':'last','pretrain':None,
      'seed':SEED,'random_seed':False,'debug':False,'disable_tqdm':False,
@@ -397,7 +442,7 @@ def prepare(args):
      'gpt_layer':2,'add_cross_attention':True,
      # Make the existing reranking defaults explicit for reproducibility.
      'ec_alpha':1.0,'count_loss_coef':0.5,'eval_matching_score_weight':0.0,
-     'caption_cost_chunk_size':16
+     'caption_cost_chunk_size':args.caption_chunk
     })
     PREPARED.mkdir(parents=True,exist_ok=True)
     cfg=PREPARED/'config.yml'
@@ -413,6 +458,7 @@ def prepare(args):
         'source_commit':SOURCE_COMMIT,'reference_repo':'https://github.com/bhubanendra-mishra/dense-video-cap',
         'reference_commit':'43914e17769701b9cf98eda203ae4c465b315fab',
         'mask_mode':MASK_MODE,'seed':SEED,'epochs':EPOCHS,
+        'runtime_profile':{k:opts[k] for k in ['hardware_profile','precision','allow_tf32','nthreads','pin_memory','caption_cost_chunk_size']},
         'train_ids':list(train),'val_ids':list(val),
         'mask_target':MASK_TARGET, 'data_signature':data_signature,
         'mask_settings':{k:opts[k] for k in opts if k.startswith('mask_') or k=='corrected_query_contrastive'},
@@ -434,7 +480,13 @@ def main():
     p.add_argument('--data-root',required=True);p.add_argument('--prepared-root',required=True)
     p.add_argument('--output-root',required=True);p.add_argument('--log-root',required=True)
     p.add_argument('--run-name',required=True);p.add_argument('--mode',choices=['smoke','subset','full'],default='full')
-    p.add_argument('--epochs',type=int,default=25);p.add_argument('--accumulation',type=int,default=4)
+    p.add_argument('--epochs',type=int,default=25);p.add_argument('--accumulation',type=int,default=None)
+    p.add_argument('--hardware-profile',choices=['generic','rtx-pro-6000'],default='generic')
+    p.add_argument('--precision',choices=['fp32','bf16'],default=None)
+    p.add_argument('--caption-chunk',type=int,default=None);p.add_argument('--workers',type=int,default=None)
+    p.add_argument('--bank-batch',type=int,default=None)
+    p.add_argument('--allow-tf32',action=argparse.BooleanOptionalAction,default=None)
+    p.add_argument('--pin-memory',action=argparse.BooleanOptionalAction,default=None)
     p.add_argument('--seed',type=int,default=777);p.add_argument('--log-every',type=int,default=10)
     p.add_argument('--mask-mode',choices=['global','hard_local','learned_gated'],default='learned_gated')
     p.add_argument('--mask-target',choices=['predicted','matched_gt'],default='matched_gt')
@@ -445,7 +497,8 @@ def main():
     p.add_argument('--legacy-contrastive',action='store_true')
     for name in ['smoke','resume-config','report']:
         p=sub.add_parser(name);p.add_argument('--config',required=True)
-        if name=='smoke':p.add_argument('--checkpoint',default='')
+        if name=='smoke':
+            p.add_argument('--checkpoint',default='');p.add_argument('--benchmark-steps',type=int,default=3)
     args=parser.parse_args()
     os.chdir(ROOT)
     {'prepare':prepare,'patch':patch_runtime,'env':inspect_env,'build-cuda':build_cuda,

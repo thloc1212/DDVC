@@ -81,6 +81,9 @@ def snapshot(model, optimizer, scheduler, epoch, iteration, info, config, phase,
 def validate_resume(config, previous):
     if config.get('gradient_accumulation_steps', 1) != previous.get('gradient_accumulation_steps', 1):
         raise ValueError('Resume effective batch changed; start a new run for a batch ablation.')
+    for key,default in [('precision','fp32'),('allow_tf32',False),('nthreads',0),('pin_memory',False)]:
+        if config.get(key,default)!=previous.get(key,default):
+            raise ValueError('Resume runtime precision/loader recipe changed: '+key)
     # Paths can change when restoring Kaggle outputs, but architecture/data recipe must not.
     keys = ('hidden_dim', 'num_queries', 'gpt_layer', 'dec_layers', 'enc_layers',
             'learned_proposal_mask', 'local_visual_attention', 'proposal_mask_bins',

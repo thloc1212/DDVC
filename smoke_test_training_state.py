@@ -19,6 +19,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from misc.training_state import (atomic_save, capture_rng, restore_rng, snapshot,
                                  schedule_contrastive, validate_resume, plain_metadata)
+from misc.runtime_perf import amp_context,configure_runtime,vram_metrics,append_performance
 
 
 def main():

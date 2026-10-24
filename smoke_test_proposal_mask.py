@@ -213,6 +213,17 @@ def main():
     assert torch.equal(a.sequences,b.sequences)
     for x,y in zip(a.scores,b.scores):torch.testing.assert_close(x,y)
     print('PASS: upgraded matched-GT query alignment, query-projection backward, bounded gate, context/pruning, real beam generation invariance')
+    # Actual tiny DDVC/GPT-2 paths under autocast catch dtype mismatches in costs/index assignments.
+    model.train();model.zero_grad(set_to_none=True)
+    with torch.autocast('cpu',dtype=torch.bfloat16):
+        mixed,losses=model.parallel_prediction_matched(dt,Criterion(),None,h2,hc2,None,init,inter,others,False)
+        total=sum(v.float() for k,v in losses.items() if k.startswith('loss_'))
+    assert torch.isfinite(total);total.backward()
+    model.eval()
+    with torch.no_grad(),torch.autocast('cpu',dtype=torch.bfloat16):
+        mixed,_=model.parallel_prediction_full(dt,Criterion(),None,h2,hc2,None,init,inter,others,False)
+    assert mixed['seq'].shape[:2]==(1,q)
+    print('PASS: actual DDVC matched training/backward, pair costs and beam/cached generation under CPU BF16 autocast')
 
 
 if __name__=='__main__':main()

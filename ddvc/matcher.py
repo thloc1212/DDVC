@@ -111,7 +111,7 @@ class HungarianMatcher(nn.Module):
                 print(self.cost_giou, cost_giou.var(dim=0), cost_giou.max(dim=0)[0] - cost_giou.min(dim=0)[0])
                 # print(self.cost_caption, cost_caption.var(dim=0), cost_caption.max(dim=0)[0] - cost_caption.min(dim=0)[0])
 
-            C = C.view(bs, num_queries, -1).cpu()
+            C = C.float().view(bs, num_queries, -1).cpu()
 
             sizes = [len(v["boxes"]) for v in targets]
             # pdb.set_trace()
@@ -257,7 +257,7 @@ class HungarianMatcher_cl(nn.Module):
                 print(self.cost_class, cost_class.var(dim=0), cost_class.max(dim=0)[0] - cost_class.min(dim=0)[0])
                 print(self.cost_giou, cost_giou.var(dim=0), cost_giou.max(dim=0)[0] - cost_giou.min(dim=0)[0])
 
-            C = C.view(bs, num_queries, -1).cpu()
+            C = C.float().view(bs, num_queries, -1).cpu()
 
             sizes = [len(v["boxes"]) for v in targets]
             indices = [linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))]
