@@ -8,6 +8,7 @@
 
 import os
 import glob
+import importlib.metadata
 
 import torch
 
@@ -19,6 +20,23 @@ from setuptools import find_packages
 from setuptools import setup
 
 requirements = ["torch", "torchvision"]
+
+def cccl_include_dirs(cuda_home):
+    candidates = []
+    if os.environ.get("DDVC_CCCL_INCLUDE"):
+        candidates.append(os.environ["DDVC_CCCL_INCLUDE"])
+    if cuda_home:
+        candidates.append(os.path.join(cuda_home, "include", "cccl"))
+    # Native Torch may be system-installed while CCCL is in Molab's uv environment.
+    try:
+        dist = importlib.metadata.distribution("nvidia-cuda-cccl")
+        for entry in dist.files or []:
+            if str(entry).replace("\\", "/").endswith("/include/cccl/nv/target"):
+                candidates.append(os.path.dirname(os.path.dirname(str(dist.locate_file(entry)))))
+    except importlib.metadata.PackageNotFoundError:
+        pass
+    return list(dict.fromkeys(path for path in candidates
+                             if os.path.isfile(os.path.join(path, "nv", "target"))))
 
 def get_extensions():
     this_dir = os.path.dirname(os.path.abspath(__file__))
@@ -49,10 +67,7 @@ def get_extensions():
     sources = [os.path.join(extensions_dir, s) for s in sources]
     include_dirs = [extensions_dir]
     # CUDA 13 relocates CCCL headers (including nv/target) below include/cccl.
-    if CUDA_HOME:
-        cccl_include = os.path.join(CUDA_HOME, "include", "cccl")
-        if os.path.isfile(os.path.join(cccl_include, "nv", "target")):
-            include_dirs.append(cccl_include)
+    include_dirs.extend(cccl_include_dirs(CUDA_HOME))
     ext_modules = [
         extension(
             "MultiScaleDeformableAttention",
