@@ -87,7 +87,9 @@ def validate_resume(config, previous):
     defaults={'dedup_loss_coef':0.,'dedup_start_epoch':1,'dedup_iou_threshold':.5,
               'dedup_confidence_threshold':.2,'eval_selection_method':'topk',
               'eval_softnms_sigma':.5,'eval_merge_duplicates':False,'eval_merge_iou':.7,
-              'eval_merge_text_similarity':.9,'selection_experiment':'baseline'}
+              'eval_merge_text_similarity':.9,'selection_experiment':'baseline',
+              'eval_merge_consecutive':False,'eval_consecutive_gap':2.,
+              'eval_consecutive_max_span':60.,'eval_consecutive_max_events':3}
     for key,default in defaults.items():
         if config.get(key,default)!=previous.get(key,default):
             raise ValueError('Resume dedup/selection recipe changed: '+key)

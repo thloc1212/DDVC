@@ -137,8 +137,9 @@ def save_dvc_json(out_json, path):
         json.dump(out_json, f)
 
 def reranking(p_src, alpha, cl_score_weight, temperature, fix_topN=-1, increase_num=0,
-              method='topk', sigma=.5, merge=False, merge_iou=.7, merge_text=.9):
-    print('SELECTION method={} sigma={} merge={} alpha={} temp={}'.format(method,sigma,merge,alpha,temperature))
+              method='topk', sigma=.5, merge=False, merge_iou=.7, merge_text=.9,
+              merge_consecutive=False, consecutive_gap=2., consecutive_max_span=60., consecutive_max_events=3):
+    print('SELECTION method={} sigma={} overlap_merge={} consecutive_merge={} gap_s={} max_span_s={} max_events={} alpha={} temp={}'.format(method,sigma,merge,merge_consecutive,consecutive_gap,consecutive_max_span,consecutive_max_events,alpha,temperature))
     with open(p_src) as stream:d=json.load(stream)
     for key,rows in d['results'].items():
         if not rows:continue
@@ -146,9 +147,12 @@ def reranking(p_src, alpha, cl_score_weight, temperature, fix_topN=-1, increase_
         fraction=increase_num-math.floor(increase_num)
         extra=math.floor(increase_num)+(np.random.binomial(1,p=fraction,size=None) if fraction>0 else 0)
         d['results'][key]=select_proposals(rows,int(top_n+extra),method,sigma,alpha,temperature,
-                                          merge,merge_iou,merge_text)
-    d['selection']={'method':method,'sigma':sigma,'merge':merge,'merge_iou':merge_iou,'merge_text_similarity':merge_text}
+                                          merge,merge_iou,merge_text,merge_consecutive,consecutive_gap,consecutive_max_span,consecutive_max_events)
+    d['selection']={'method':method,'sigma':sigma,'merge':merge,'merge_iou':merge_iou,'merge_text_similarity':merge_text,
+                    'merge_consecutive':merge_consecutive,'consecutive_gap':consecutive_gap,
+                    'consecutive_max_span':consecutive_max_span,'consecutive_max_events':consecutive_max_events}
     suffix='' if method=='topk' and not merge else '_{}_sigma{}_merge{}'.format(method,sigma,int(merge))
+    if merge_consecutive:suffix += '_consecutive_gap{}_span{}_events{}'.format(consecutive_gap,consecutive_max_span,consecutive_max_events)
     save_path=p_src+'_rerank_alpha{}_temp{}{}.json'.format(alpha,temperature,suffix)
     save_dvc_json(d,save_path)
     return save_path
@@ -262,8 +266,12 @@ def evaluate(model,memory_bank,criterion,contrastive_criterion, postprocessors, 
         metric_json_path = reranking(raw_dvc_json_path, alpha=alpha, cl_score_weight=opt.eval_matching_score_weight, temperature=2.0,
             method=getattr(opt,'eval_selection_method','topk'),sigma=getattr(opt,'eval_softnms_sigma',.5),
             merge=getattr(opt,'eval_merge_duplicates',False),merge_iou=getattr(opt,'eval_merge_iou',.7),
-            merge_text=getattr(opt,'eval_merge_text_similarity',.9))
-    elif getattr(opt,'eval_selection_method','topk')!='topk' or getattr(opt,'eval_merge_duplicates',False):
+            merge_text=getattr(opt,'eval_merge_text_similarity',.9),
+            merge_consecutive=getattr(opt,'eval_merge_consecutive',False),
+            consecutive_gap=getattr(opt,'eval_consecutive_gap',2.),
+            consecutive_max_span=getattr(opt,'eval_consecutive_max_span',60.),
+            consecutive_max_events=getattr(opt,'eval_consecutive_max_events',3))
+    elif getattr(opt,'eval_selection_method','topk')!='topk' or getattr(opt,'eval_merge_duplicates',False) or getattr(opt,'eval_merge_consecutive',False):
         raise ValueError('Soft-NMS/merge requires positive count_loss_coef and predicted event counts')
     save_dvc_json(out_json_g, dvc_json_path + '.grounding.json')
     save_dvc_json(aux_out_json_g, dvc_json_path + '_aux.grounding.json')

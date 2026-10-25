@@ -37,6 +37,9 @@ không được trình bày như hoàn toàn mới một cơ chế unmatched-bac
 
 ## Soft-NMS và merge
 
+Có thêm mode `dedup_softnms_merge_consecutive`: xem [hướng dẫn mới](CONSECUTIVE_MERGE_MOLAB.md).
+Mode này nối các selected event liên tiếp cùng caption, KHÁC overlap fusion phía dưới.
+
 Giữ joint score gốc = proposal_score + sentence_score/(word_count^2 + 1e-5).
 Gaussian temporal Soft-NMS sigma=0.5, giữ N do event counter dự đoán.
 Score âm được xử lý để suppression không làm điểm tăng. Raw candidates giữ riêng.
@@ -57,7 +60,8 @@ raw_box vẫn là box gốc representative, timestamp là box fused; metadata l�
 | baseline | 0 | không | không |
 | softnms | 0 | có | không |
 | dedup_softnms (default) | 0.1 từ epoch 1 | có | không |
-| dedup_softnms_merge | 0.1 từ epoch 1 | có | có |
+| dedup_softnms_merge | 0.1 từ epoch 1 | có | overlap fusion |
+| dedup_softnms_merge_consecutive | 0.1 từ epoch 1 | có | overlap fusion + consecutive union |
 
 Subset 30%: 371 train /131 val, full:1237/436; cả hai 15 epoch.
 Adam LR 5e-5, WD 1e-4, LR milestones [8,11], gamma0.5, seed777.

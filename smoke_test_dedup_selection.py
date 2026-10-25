@@ -74,10 +74,34 @@ def main():
     assert len(select_proposals(separate,2,'softnms',merge=True))==2
     different=[rows[0],dict(rows[1],sentence='boil pasta in water')]
     assert len(select_proposals(different,2,'softnms',merge=True))==2
+    # Consecutive merge occurs AFTER selection, requires the same ordered caption.
+    chain=[dict(rows[0],timestamp=[30.+10*i,40.+10*i],query_id=i,
+                sentence='Stir the soup.' if i%2 else 'stir the soup') for i in range(3)]
+    before=json.dumps(chain,sort_keys=True)
+    joined=select_proposals(chain,3,'softnms',merge_consecutive=True)
+    assert len(joined)==1 and joined[0]['timestamp']==[30.,60.]
+    assert joined[0]['consecutive_merge_size']==3 and joined[0]['merged_query_ids']==[0,1,2]
+    assert json.dumps(chain,sort_keys=True)==before
+    assert len(select_proposals(chain,2,'softnms',merge_consecutive=True))<=2
+    four=chain+[dict(chain[0],timestamp=[60.,70.],query_id=3)]
+    assert len(select_proposals(four,4,'softnms',merge_consecutive=True))==2
+    long_chain=[dict(p,timestamp=[30.*i,30.*(i+1)]) for i,p in enumerate(chain)]
+    assert len(select_proposals(long_chain,3,'softnms',merge_consecutive=True))==2
+    interrupted=[chain[0],dict(chain[1],sentence='add salt'),chain[2]]
+    assert len(select_proposals(interrupted,3,'softnms',merge_consecutive=True))==3
+    order_change=[chain[0],dict(chain[1],sentence='soup the stir')]
+    assert len(select_proposals(order_change,2,'softnms',merge_consecutive=True))==2
+    for gap,expected_count in [(2.,1),(2.01,2),(-1.,1),(-5.,2)]:
+        pair=[chain[0],dict(chain[1],timestamp=[40.+gap,50.+gap])]
+        assert len(select_proposals(pair,2,'softnms',merge_consecutive=True))==expected_count
+    for kwargs in [dict(consecutive_gap=-1),dict(consecutive_max_span=0),dict(consecutive_max_events=1)]:
+        try:select_proposals(chain,3,'softnms',merge_consecutive=True,**kwargs)
+        except ValueError:pass
+        else:raise AssertionError('Invalid consecutive bounds accepted')
     assert select_proposals([],0,'softnms')==[] and select_proposals(rows,0,'softnms')==[]
     negative=[dict(r,proposal_score=-1.) for r in rows]
     assert all(r['selection_score']<=r['joint_score'] for r in select_proposals(negative,3,'softnms'))
-    for key,value in [('dedup_loss_coef',.1),('eval_selection_method','softnms'),('eval_merge_duplicates',True)]:
+    for key,value in [('dedup_loss_coef',.1),('eval_selection_method','softnms'),('eval_merge_duplicates',True),('eval_merge_consecutive',True),('eval_consecutive_gap',3.)]:
         try:validate_resume({key:value},{})
         except ValueError:pass
         else:raise AssertionError('Resume accepted changed recipe: '+key)
@@ -96,7 +120,10 @@ def main():
         observed=[]
         def score_selected(filename,**kwargs):
             saved=json.loads(Path(filename).read_text());observed.append(saved)
-            assert [p['query_id'] for p in saved['results']['video']]==[0,2]
+            if getattr(opts,'eval_merge_consecutive',False):
+                assert len(saved['results']['video'])==1 and saved['results']['video'][0]['timestamp']==[30.,60.]
+            else:
+                assert [p['query_id'] for p in saved['results']['video']]==[0,2]
             return dict(CIDEr=.4,METEOR=.06,soda_c=.07,MetaScore=.13)
         scope=dict(json=json,np=np,math=math,select_proposals=select_proposals,
             opt=opts,dvc_json_path=path,out_json=dict(results={'video':[dict(r,pred_event_count=2) for r in rows]},version='1',external_data={}),
@@ -107,6 +134,12 @@ def main():
         scores,_=scope['run_tail']();final=json.loads(Path(path).read_text());raw_saved=json.loads(Path(path[:-5]+'.raw.json').read_text())
         assert len(raw_saved['results']['video'])==3 and len(final['results']['video'])==2
         assert final['CIDEr']==scores['CIDEr']==.4 and final['selection']['method']=='softnms' and len(observed)==1
+        opts.eval_merge_consecutive=True
+        scope['out_json']['results']['video']=[dict(p,pred_event_count=3) for p in chain]
+        scores,_=scope['run_tail']();final=json.loads(Path(path).read_text())
+        assert final['selection']['merge_consecutive'] and len(final['results']['video'])==1
+        assert len(observed)==2
+
     train_tree=ast.parse((root/'train.py').read_text())
     warmup=next(n for n in ast.walk(train_tree) if isinstance(n,ast.If)
                 and "weight_dict['loss_dedup']" in ast.unparse(n)
@@ -129,7 +162,7 @@ def main():
                 original=json.loads(raw.with_name(f'num436_epoch{epoch}.json').read_text())['results']
                 for vid,items in candidates.items():
                     assert [p['query_id'] for p in select_proposals(items,len(original[vid]))]==[p['query_id'] for p in original[vid]],(epoch,vid)
-    print('PASS dedup actual-criterion backward/update, normalized repeats, empty sets, protected/ambiguous GT, counter logging, Soft-NMS audit parity, conservative merge and resume guards')
+    print('PASS dedup actual-criterion backward/update, normalized repeats, empty sets, protected/ambiguous GT, counter logging, Soft-NMS audit parity, conservative/consecutive merge bounds, evaluation roundtrip and resume guards')
 
 
 if __name__=='__main__':main()

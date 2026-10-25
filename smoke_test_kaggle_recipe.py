@@ -70,7 +70,7 @@ def main():
             for n in updates:
                 exec(compile(ast.Module(body=[n], type_ignores=[]), '<actual prepare config>', 'exec'), namespace)
             assert validate(opts, mode) == [8, 11]
-            for experiment in ['baseline','softnms','dedup_softnms','dedup_softnms_merge']:
+            for experiment in ['baseline','softnms','dedup_softnms','dedup_softnms_merge','dedup_softnms_merge_consecutive']:
                 variant=copy.deepcopy(opts);variant.update(namespace['experiment_options'](experiment))
                 assert validate(variant,mode)==[8,11]
             for key, value in [('epoch',25),('lr',1e-4),('gradient_accumulation_steps',8),

@@ -374,6 +374,10 @@ def parse_opts(argv=None, write_options=True):
     parser.add_argument('--eval_merge_duplicates', action='store_true', default=False)
     parser.add_argument('--eval_merge_iou', type=float, default=.7)
     parser.add_argument('--eval_merge_text_similarity', type=float, default=.9)
+    parser.add_argument('--eval_merge_consecutive', action='store_true', default=False)
+    parser.add_argument('--eval_consecutive_gap', type=float, default=2.)
+    parser.add_argument('--eval_consecutive_max_span', type=float, default=60.)
+    parser.add_argument('--eval_consecutive_max_events', type=int, default=3)
     parser.add_argument('--ec_alpha', type=float, default=0.3)
 
     # GPT2 decode
