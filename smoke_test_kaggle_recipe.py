@@ -19,6 +19,34 @@ def main():
     updates = [n for n in prepare.body if isinstance(n, ast.Expr) and isinstance(n.value, ast.Call)
                and isinstance(n.value.func, ast.Attribute) and isinstance(n.value.func.value, ast.Name)
                and n.value.func.value.id == 'opts' and n.value.func.attr == 'update']
+    # Exercise the exact prepare validator loading block without tools on sys.path.
+    guard = next(n for n in prepare.body if isinstance(n, ast.If)
+                 and 'recipe_spec' in ast.unparse(n))
+    saved_path = sys.path[:]
+    sys.path = [entry for entry in sys.path if Path(entry or '.').resolve() != root.resolve()/'tools']
+    class Checked:
+        def __init__(self): self.called = False
+    checked = Checked()
+    import importlib.util
+    original_spec = importlib.util.spec_from_file_location
+    def tracked_spec(name, path):
+        assert Path(path) == root.resolve()/'tools'/'kaggle_recipe.py'
+        checked.called = True
+        return original_spec(name, path)
+    importlib.util.spec_from_file_location = tracked_spec
+    try:
+        config = json.loads((root/'tools/kaggle_mask_recipe.json').read_text())
+        config['experiment_recipe'] = 'kaggle_cvpr2018_mask'
+        with tempfile.TemporaryDirectory() as check_tmp:
+            for key,count in [('train_caption_file',371),('val_caption_file',131)]:
+                path=Path(check_tmp)/key;path.write_text(json.dumps(dict.fromkeys(map(str,range(count)),{})))
+                config[key]=str(path)
+            exec(compile(ast.Module(body=[guard], type_ignores=[]), '<actual validator import>', 'exec'),
+                 dict(ROOT=root.resolve(), RUN_MODE='subset', opts=config))
+        assert checked.called
+    finally:
+        importlib.util.spec_from_file_location = original_spec
+        sys.path = saved_path
     with tempfile.TemporaryDirectory() as tmp:
         p = Path(tmp)
         for mode, counts in [('subset', (371, 131)), ('full', (1237, 436))]:

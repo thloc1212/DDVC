@@ -463,8 +463,12 @@ def prepare(args):
      'caption_cost_chunk_size':args.caption_chunk
     })
     if RUN_MODE != 'smoke':
-        from kaggle_recipe import validate as validate_kaggle_recipe
-        validate_kaggle_recipe(opts, RUN_MODE)
+        # Load our sibling by absolute path: imported dependencies can alter sys.path.
+        import importlib.util
+        recipe_spec = importlib.util.spec_from_file_location('ddvc_kaggle_recipe', ROOT/'tools'/'kaggle_recipe.py')
+        recipe_module = importlib.util.module_from_spec(recipe_spec)
+        recipe_spec.loader.exec_module(recipe_module)
+        recipe_module.validate(opts, RUN_MODE)
     PREPARED.mkdir(parents=True,exist_ok=True)
     cfg=PREPARED/'config.yml'
     cfg.write_text(yaml.safe_dump(opts,sort_keys=False))
