@@ -11,6 +11,8 @@ def main():
     root=Path(__file__).parent
     for rel,expected in EXPECTED.items():
         data=(root/rel).read_bytes().replace(b'\r\n',b'\n')
+        if rel.endswith('ddvc_ret_encdec_clip_capQ.py'):
+            data=data.replace(b"    if getattr(args, 'dedup_loss_coef', 0.) > 0:\n        weight_dict['loss_dedup'] = args.dedup_loss_coef\n",b'')
         data=data.replace(b"GPT2Tokenizer.from_pretrained('/DATA_DISK/plm_cache/gpt2')",b"GPT2Tokenizer.from_pretrained('gpt2')")
         assert hashlib.sha256(data).hexdigest()==expected, 'Legacy model source changed: '+rel
     spec=importlib.util.spec_from_file_location('legacy_cli',root/'tools/molab_pipeline.py')
@@ -22,6 +24,6 @@ def main():
         try:cli.resolve_profile(SimpleNamespace(hardware_profile='legacy-cvpr2018',**override))
         except ValueError:pass
         else:raise AssertionError('Silent legacy profile change: '+str(override))
-    print('PASS core model matches original ZIP (public-tokenizer path normalized); legacy defaults and drift guards')
+    print('PASS caption/mask and baseline backbone match original ZIP; only tested additive dedup weight allowed; legacy profile guards')
 
 if __name__=='__main__':main()

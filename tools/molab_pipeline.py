@@ -210,6 +210,17 @@ def resolve_profile(args):
     return args
 
 
+def experiment_options(experiment):
+    if experiment not in ('baseline','softnms','dedup_softnms','dedup_softnms_merge'):
+        raise ValueError('Unknown selection experiment')
+    return dict(selection_experiment=experiment,
+                dedup_loss_coef=.1 if experiment.startswith('dedup_') else 0.,
+                dedup_start_epoch=1,dedup_iou_threshold=.5,dedup_confidence_threshold=.2,
+                eval_selection_method='topk' if experiment=='baseline' else 'softnms',
+                eval_softnms_sigma=.5,eval_merge_duplicates=experiment.endswith('_merge'),
+                eval_merge_iou=.7,eval_merge_text_similarity=.9)
+
+
 def prepare(args):
     resolve_profile(args)
     from types import SimpleNamespace
@@ -419,6 +430,8 @@ def prepare(args):
     import yaml
     opts=json.loads((REPO/'opts.json').read_text())
     opts['experiment_recipe']='kaggle_cvpr2018_mask'
+    experiment=getattr(args,'experiment','baseline')
+    opts.update(experiment_options(experiment))
     opts.update({'lr':5e-5,'optimizer_type':'adam','weight_decay':1e-4,
                  'learning_rate_decay_start':8,'learning_rate_decay_every':3,'learning_rate_decay_rate':0.5})
     import hashlib
@@ -483,6 +496,7 @@ def prepare(args):
         'source_commit':SOURCE_COMMIT,'legacy_model_commit':'4918a0cb89bac0966f74c39e7320d44f0a780430','reference_repo':'https://github.com/bhubanendra-mishra/dense-video-cap',
         'reference_commit':'43914e17769701b9cf98eda203ae4c465b315fab',
         'mask_mode':MASK_MODE,'seed':SEED,'epochs':EPOCHS,
+        'selection_experiment':experiment_options(experiment),
         'runtime_profile':{k:opts[k] for k in ['hardware_profile','precision','allow_tf32','nthreads','pin_memory','caption_cost_chunk_size']},
         'train_ids':list(train),'val_ids':list(val),
         'mask_target':MASK_TARGET, 'data_signature':data_signature,
@@ -505,6 +519,7 @@ def main():
     p.add_argument('--data-root',required=True);p.add_argument('--prepared-root',required=True)
     p.add_argument('--output-root',required=True);p.add_argument('--log-root',required=True)
     p.add_argument('--run-name',required=True);p.add_argument('--mode',choices=['smoke','subset','full'],default='full')
+    p.add_argument('--experiment',choices=['baseline','softnms','dedup_softnms','dedup_softnms_merge'],default='dedup_softnms')
     p.add_argument('--epochs',type=int,default=15);p.add_argument('--accumulation',type=int,default=None)
     p.add_argument('--hardware-profile',choices=['legacy-cvpr2018'],default='legacy-cvpr2018')
     p.add_argument('--precision',choices=['fp32','bf16'],default=None)

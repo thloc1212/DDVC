@@ -1559,6 +1559,8 @@ def build(args):
         weight_dict.update(aux_weight_dict)
     if getattr(args, 'learned_proposal_mask', False):
         weight_dict['loss_proposal_mask'] = args.proposal_mask_loss_coef
+    if getattr(args, 'dedup_loss_coef', 0.) > 0:
+        weight_dict['loss_dedup'] = args.dedup_loss_coef
     losses = ['labels', 'boxes', 'cardinality']
 
     criterion = SetCriterion_cl(args.num_classes, matcher, weight_dict, losses, focal_alpha=args.focal_alpha,

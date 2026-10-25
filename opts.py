@@ -365,6 +365,15 @@ def parse_opts(argv=None, write_options=True):
     parser.add_argument('--crop_num', type=int, default=2)
 
     # reranking
+    parser.add_argument('--dedup_loss_coef', type=float, default=0.)
+    parser.add_argument('--dedup_start_epoch', type=int, default=1)
+    parser.add_argument('--dedup_iou_threshold', type=float, default=.5)
+    parser.add_argument('--dedup_confidence_threshold', type=float, default=.2)
+    parser.add_argument('--eval_selection_method', choices=['topk','softnms'], default='topk')
+    parser.add_argument('--eval_softnms_sigma', type=float, default=.5)
+    parser.add_argument('--eval_merge_duplicates', action='store_true', default=False)
+    parser.add_argument('--eval_merge_iou', type=float, default=.7)
+    parser.add_argument('--eval_merge_text_similarity', type=float, default=.9)
     parser.add_argument('--ec_alpha', type=float, default=0.3)
 
     # GPT2 decode

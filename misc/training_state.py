@@ -84,6 +84,13 @@ def validate_resume(config, previous):
     for key,default in [('precision','fp32'),('allow_tf32',False),('nthreads',0),('pin_memory',False)]:
         if config.get(key,default)!=previous.get(key,default):
             raise ValueError('Resume runtime precision/loader recipe changed: '+key)
+    defaults={'dedup_loss_coef':0.,'dedup_start_epoch':1,'dedup_iou_threshold':.5,
+              'dedup_confidence_threshold':.2,'eval_selection_method':'topk',
+              'eval_softnms_sigma':.5,'eval_merge_duplicates':False,'eval_merge_iou':.7,
+              'eval_merge_text_similarity':.9,'selection_experiment':'baseline'}
+    for key,default in defaults.items():
+        if config.get(key,default)!=previous.get(key,default):
+            raise ValueError('Resume dedup/selection recipe changed: '+key)
     # Paths can change when restoring Kaggle outputs, but architecture/data recipe must not.
     keys = ('hidden_dim', 'num_queries', 'gpt_layer', 'dec_layers', 'enc_layers',
             'learned_proposal_mask', 'local_visual_attention', 'proposal_mask_bins',

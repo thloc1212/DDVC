@@ -6,6 +6,7 @@
 import torch
 import torch.nn.functional as F
 from torch import nn
+from ddvc.dedup_loss import normalized_dedup_loss
 
 from misc.detr_utils import box_ops
 from misc.detr_utils.misc import (accuracy, get_world_size,
@@ -86,9 +87,11 @@ class SetCriterion(nn.Module):
         device = pred_logits.device
         tgt_lengths = torch.as_tensor([len(v["labels"]) for v in targets], device=device)
         # Count the number of predictions that are NOT "no-object" (which is the last class)
-        card_pred = (pred_logits.argmax(-1) != pred_logits.shape[-1] - 1).sum(1)
+        card_pred = (pred_logits.sigmoid().amax(-1) > .5).sum(1)
         card_err = F.l1_loss(card_pred.float(), tgt_lengths.float())
         losses = {'cardinality_error': card_err}
+        if 'pred_count' in outputs:
+            losses['counter_count_error'] = F.l1_loss(outputs['pred_count'].argmax(-1).float(),tgt_lengths.float())
         return losses
 
     def loss_boxes(self, outputs, targets, indices, num_boxes):
@@ -342,9 +345,11 @@ class SetCriterion_cl(nn.Module):
         device = pred_logits.device
         tgt_lengths = torch.as_tensor([len(v["labels"]) for v in targets], device=device)
         # Count the number of predictions that are NOT "no-object" (which is the last class)
-        card_pred = (pred_logits.argmax(-1) != pred_logits.shape[-1] - 1).sum(1)
+        card_pred = (pred_logits.sigmoid().amax(-1) > .5).sum(1)
         card_err = F.l1_loss(card_pred.float(), tgt_lengths.float())
         losses = {'cardinality_error': card_err}
+        if 'pred_count' in outputs:
+            losses['counter_count_error'] = F.l1_loss(outputs['pred_count'].argmax(-1).float(),tgt_lengths.float())
         return losses
 
     def loss_boxes(self, outputs, targets, indices, num_boxes):
@@ -431,6 +436,11 @@ class SetCriterion_cl(nn.Module):
         for loss in self.losses:
             kwargs = {}
             losses.update(self.get_loss(loss, outputs, targets, last_indices, num_boxes, **kwargs))
+
+        if getattr(self.opt,'dedup_loss_coef',0.) > 0:
+            losses.update(normalized_dedup_loss(outputs,targets,last_indices,
+                getattr(self.opt,'dedup_iou_threshold',.5),
+                getattr(self.opt,'dedup_confidence_threshold',.2)))
 
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if 'aux_outputs' in outputs:

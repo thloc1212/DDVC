@@ -7,8 +7,10 @@ WORK=$(dirname "$REPO")
 PY=${DDVC_PYTHON:-/tmp/uv-venv/bin/python}
 MODE=${2:-subset}
 case "$MODE" in subset|full) ;; *) echo 'Mode must be subset or full'; exit 1;; esac
-RUN=yc2_${MODE}_cvpr2018_kaggle_e15_b1
-SMOKE_RUN=yc2_smoke_cvpr2018_e2_b1
+EXPERIMENT=${3:-dedup_softnms}
+case "$EXPERIMENT" in baseline|softnms|dedup_softnms|dedup_softnms_merge) ;; *) echo 'Invalid experiment'; exit 1;; esac
+RUN=yc2_${MODE}_${EXPERIMENT}_e15_b1
+SMOKE_RUN=yc2_smoke_${EXPERIMENT}_e2_b1
 CFG="$WORK/prepared/$RUN/config.yml"
 export WORK REPO PY RUN CFG
 export CUDA_VISIBLE_DEVICES=${DDVC_GPU:-0}
@@ -33,7 +35,7 @@ prepare() {
     echo "Existing config retained: $WORK/prepared/$name/config.yml"; return
   fi
   logged "prepare_$mode" "$PY" -u tools/molab_pipeline.py prepare \
-    --mode "$mode" --run-name "$name" --epochs "$epochs" \
+    --mode "$mode" --run-name "$name" --epochs "$epochs" --experiment "$EXPERIMENT" \
     --data-root "${DDVC_DATA_ROOT:-$WORK/assets}" --prepared-root "$WORK/prepared" \
     --output-root "$WORK/runs" --log-root "$WORK/logs"
 }
@@ -72,6 +74,7 @@ PY
 case ${1:-help} in
   setup)
     "$PY" smoke_test_kaggle_recipe.py
+    logged dedup_cpu "$PY" smoke_test_dedup_selection.py
     "$PY" smoke_test_legacy_recipe.py
     "$PY" -c 'import torch,torchvision; assert torch.cuda.is_available(); print(torch.__version__,torch.version.cuda)'
     "$PY" -c 'import json,torch,torchvision; from pathlib import Path; Path("../provenance/native_torch_before.json").write_text(json.dumps([torch.__version__,torchvision.__version__]))'
@@ -95,11 +98,11 @@ case ${1:-help} in
   prepare-smoke) test -f "$WORK/provenance/cuda_ready"; prepare smoke "$SMOKE_RUN" 2 ;;
   smoke)
     logged smoke "$PY" -u tools/molab_pipeline.py smoke --config "$WORK/prepared/$SMOKE_RUN/config.yml"
-    touch "$WORK/provenance/model_smoke_ready"
+    touch "$WORK/provenance/model_smoke_${EXPERIMENT}_ready"
     ;;
   train-smoke) logged smoke_train "$PY" -u train.py --cfg_path "$WORK/prepared/$SMOKE_RUN/config.yml" ;;
   prepare-run) test -f "$WORK/provenance/cuda_ready"; prepare "$MODE" "$RUN" 15; check_config ;;
-  train) test -f "$WORK/provenance/cuda_ready"; test -f "$WORK/provenance/model_smoke_ready"; start_training no ;;
+  train) test -f "$WORK/provenance/cuda_ready"; test -f "$WORK/provenance/model_smoke_${EXPERIMENT}_ready"; start_training no ;;
   resume) test -f "$WORK/provenance/cuda_ready"; start_training yes ;;
   restage) logged restage "$PY" -u tools/molab_pipeline.py restage --config "$CFG" --data-root "${DDVC_DATA_ROOT:-$WORK/assets}" ;;
   smoke-resume) logged resume_smoke "$PY" -u tools/molab_pipeline.py smoke --config "$CFG" --checkpoint "$WORK/runs/$RUN/model-last.pth" ;;
@@ -108,5 +111,5 @@ case ${1:-help} in
   status)
     if [[ -f "$WORK/logs/$RUN.pid" ]]; then ps -p "$(cat "$WORK/logs/$RUN.pid")" -o pid,etime,%cpu,%mem,args || true; fi
     tail -n 40 "$WORK/logs/$RUN.log" ;;
-  *) echo 'Usage: kaggle_molab.sh COMMAND [subset|full]; default subset. Commands: setup prepare-smoke smoke train-smoke prepare-run train logs status report restage smoke-resume resume' ;;
+  *) echo 'Usage: kaggle_molab.sh COMMAND [subset|full] [baseline|softnms|dedup_softnms|dedup_softnms_merge]; default subset dedup_softnms. Commands: setup prepare-smoke smoke train-smoke prepare-run train logs status report restage smoke-resume resume' ;;
 esac

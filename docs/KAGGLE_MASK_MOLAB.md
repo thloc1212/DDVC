@@ -1,5 +1,8 @@
 # DDVC + CVPR2018 masking: Kaggle recipe trên Molab
 
+> Tài liệu nền cho branch cũ. Trên branch exp/gt-aware-dedup-softnms, dùng
+> docs/DEDUP_SOFTNMS_MOLAB.md và tools/dedup_molab.sh.
+
 Branch: https://github.com/thloc1212/DDVC/tree/exp/learned-gated-proposal-mask
 
 Giữ model learned proposal mask/GPT-2/DDVC core của ZIP gốc. Không dùng time prefix,

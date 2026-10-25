@@ -64,9 +64,15 @@ def main():
                 MASK_TARGET='predicted', BALANCED_MASK_BCE=False, PRUNE_THRESHOLD=-1., GATE_MIN=0., GATE_MAX=1., MASK_CONTEXT_RATIO=0., MASK_MIN_FRAMES=1,
                 CORRECTED_QUERY_CONTRASTIVE=False, LOCAL_CONTEXT_RATIO=.1, LOCAL_MIN_FRAMES=4,
                 data_signature='test', train=range(counts[0]), time=time)
+            config_options=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='experiment_options')
+            exec(compile(ast.Module(body=[config_options],type_ignores=[]),'<actual config options>','exec'),namespace)
+            namespace['experiment']='baseline'
             for n in updates:
                 exec(compile(ast.Module(body=[n], type_ignores=[]), '<actual prepare config>', 'exec'), namespace)
             assert validate(opts, mode) == [8, 11]
+            for experiment in ['baseline','softnms','dedup_softnms','dedup_softnms_merge']:
+                variant=copy.deepcopy(opts);variant.update(namespace['experiment_options'](experiment))
+                assert validate(variant,mode)==[8,11]
             for key, value in [('epoch',25),('lr',1e-4),('gradient_accumulation_steps',8),
                                ('mask_prune_threshold',.05),('learned_proposal_mask',False)]:
                 bad=copy.deepcopy(opts);bad[key]=value
