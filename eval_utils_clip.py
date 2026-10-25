@@ -12,6 +12,7 @@ from collections import OrderedDict
 from tqdm import tqdm
 from os.path import dirname, abspath
 import math
+from misc.runtime_perf import amp_context
 
 ddvc_dir = dirname(abspath(__file__))
 sys.path.insert(0, ddvc_dir)
@@ -194,11 +195,14 @@ def evaluate(model,memory_bank,criterion,contrastive_criterion, postprocessors, 
                 captions.extend(video_sents)
 
 
-            output, loss = model(dt, criterion, contrastive_criterion, opt.transformer_input_type,memory_bank, eval_mode=True,sent_embedder=sent_embedder,gt_bank=gt_bank)
+            with amp_context(opt):
+                output, loss = model(dt, criterion, contrastive_criterion, opt.transformer_input_type,memory_bank, eval_mode=True,sent_embedder=sent_embedder,gt_bank=gt_bank)
+            if logger is not None and (len_check == 1 or len_check % max(1,getattr(opt,'progress_log_every',10)) == 0 or len_check == len(loader)):
+                logger.info('VALIDATION_PROGRESS batches=%d/%d',len_check,len(loader))
             orig_target_sizes = dt['video_length'][:, 1]
 
             weight_dict = criterion.weight_dict
-            final_loss = sum(loss[k] * weight_dict[k] for k in loss.keys() if k in weight_dict)
+            final_loss = sum(loss[k].float() * weight_dict[k] for k in loss.keys() if k in weight_dict)
 
             for loss_k, loss_v in loss.items():
                 loss_sum[loss_k] = loss_sum.get(loss_k, 0) + loss_v.item()
@@ -212,10 +216,10 @@ def evaluate(model,memory_bank,criterion,contrastive_criterion, postprocessors, 
             batch_json_g = {}
             aux_batch_json_g = {}
             for idx, video_name in enumerate(dt['video_key']):
-                segment = results[idx]['boxes'].cpu().numpy()
+                segment = results[idx]['boxes'].float().cpu().numpy()
                 is_gt_proposals = opt.transformer_input_type == 'gt_proposals'
                 segment_num = len(segment)
-                raw_boxes = results[idx]['raw_boxes'].cpu().numpy()
+                raw_boxes = results[idx]['raw_boxes'].float().cpu().numpy()
                 raw_boxes_mask = raw_boxes.sum(1) != 0
                 
                 batch_json[video_name] = [

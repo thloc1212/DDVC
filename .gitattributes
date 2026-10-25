@@ -1,0 +1,2 @@
+# Linux launchers must retain LF when archived from a Windows workstation.
+*.sh text eol=lf
