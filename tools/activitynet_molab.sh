@@ -37,23 +37,9 @@ prepare() {
 start_train() {
   local resume=$1
   "$PY" tools/activitynet_pipeline.py check --config "$CFG"
-  "$PY" - "$WORK" "$MODE" <<'PY'
-import sys
-from pathlib import Path
-work=Path(sys.argv[1]);old='anet_'+sys.argv[2]+'_current_model_e15_b1'
-pidfile=work/'logs'/(old+'.pid')
-if pidfile.is_file():
-    try:
-        pid=int(pidfile.read_text().strip())
-        cmd=(Path('/proc')/str(pid)/'cmdline').read_bytes().replace(b'\0',b' ').decode(errors='replace')
-    except (FileNotFoundError,ValueError):pass
-    else:
-        if 'train.py' in cmd and str(work/'prepared'/old/'config.yml') in cmd:
-            raise RuntimeError(f'Old Q50 run still active at PID {pid}. Stop that training process before Q10; Ctrl+C on tail does not stop training.')
-PY
-  if [[ -f "$WORK/logs/$RUN.pid" ]] && kill -0 "$(cat "$WORK/logs/$RUN.pid")" 2>/dev/null; then
-    echo 'Saved PID is alive; inspect status first'; exit 1
-  fi
+  local old_run=anet_${MODE}_current_model_e15_b1
+  "$PY" tools/training_pid.py --pid-file "$WORK/logs/$old_run.pid" --config "$WORK/prepared/$old_run/config.yml"
+  "$PY" tools/training_pid.py --pid-file "$WORK/logs/$RUN.pid" --config "$CFG"
   if [[ "$resume" == yes ]]; then
     "$PY" tools/molab_pipeline.py resume-config --config "$CFG"
   else
@@ -81,6 +67,7 @@ case ${1:-help} in
   setup)
     logged adapter_cpu "$PY" smoke_test_activitynet_adapter.py
     logged temporal_pool_cpu "$PY" smoke_test_temporal_pooling.py
+    logged pid_guard "$PY" smoke_test_training_pid.py
     bash tools/dedup_molab.sh setup full no_dedup_same_merges
     ;;
   prepare-smoke) test -f "$WORK/provenance/cuda_ready"; prepare smoke "$SMOKE_RUN" ;;

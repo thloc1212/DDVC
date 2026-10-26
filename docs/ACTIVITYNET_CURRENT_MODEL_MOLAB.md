@@ -259,3 +259,11 @@ nếu đã có model-last.pth thì smoke-resume/resume. Guard vẫn dừng trư�
 NaN/Inf; khi đó file `runs/<run>/nonfinite_diagnostics.json` ghi video ID, bad loss
 terms, raw captions, quantized GT spans và tình trạng finite của video tensor.
 Gửi file đó để xác định nguyên nhân thực sự, không khẳng định mọi NaN đều do pooling.
+
+## Saved PID is alive nhưng log đã kết thúc
+
+Bản launcher mới xác minh PID không phải zombie, argv đúng train.py và đúng config.
+PID đã hết hoặc được dùng lại bởi process khác chỉ làm xoá file .pid cũ, không gửi
+signal và không xoá checkpoint. Nếu đúng training còn chạy, vẫn chặn chạy trùng và
+in TRAIN_ALREADY_RUNNING. Cập nhật `git pull --ff-only`, rồi chạy lại train. Nếu chỉ
+là failed startup không checkpoint, folder lỗi được giữ riêng tự động.
