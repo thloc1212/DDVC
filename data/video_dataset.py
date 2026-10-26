@@ -168,7 +168,12 @@ class EDVCdataset(Dataset):
         self.num_queries = opt.num_queries
         
         if 'clip' in opt.visual_feature_type:
-            self.viz_feats=torch.load(feature_folder[0])
+            if getattr(self.opt, 'feature_mmap', False):
+                # Map large ActivityNet archives without duplicating train/val RAM.
+                self.viz_feats=torch.load(feature_folder[0], map_location='cpu',
+                                          mmap=True, weights_only=False)
+            else:
+                self.viz_feats=torch.load(feature_folder[0])
             
     def __len__(self):
         return len(self.keys)
