@@ -28,6 +28,14 @@ def report_nonfinite_loss(loss,weights,dt,save_folder,epoch,batch_index,iteratio
         loss_values=values,loss_weights=weights,bad_loss_terms=bad,
         quantized_gt_spans=spans,empty_gt_spans=[i for i,(s,e) in enumerate(spans) if e<=s],
         tensor_stats=stats)
+    labels=dt.get('cap_tensor')
+    if isinstance(labels,torch.Tensor) and labels.ndim==2:
+        shifted=labels.detach()[:,1:]
+        report['caption_target_stats']=dict(
+            shape=list(labels.shape),
+            non_padding_shifted_per_row=shifted.ne(50256).sum(-1).cpu().tolist(),
+            colon_token_25_per_row=shifted.eq(25).sum(-1).cpu().tolist(),
+            final_token_ids=labels.detach()[:,-1].cpu().tolist())
     path=Path(save_folder)/'nonfinite_diagnostics.json'
     path.write_text(json.dumps(report,indent=2,default=str),encoding='utf8')
     return path,bad

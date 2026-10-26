@@ -21,6 +21,7 @@ from misc.detr_utils.misc import (inverse_sigmoid)
 
 from .matcher import build_matcher_cl
 from .temporal_pooling import pool_temporal_segments
+from transformers.caption_targets import prepare_legacy_caption_targets
 
 from .deformable_transformer import build_deforamble_transformer
 from ddvc.CaptioningHead import build_captioner
@@ -1193,7 +1194,7 @@ class CM2(nn.Module):
                     pair_losses = []
                     loss_fct = CrossEntropyLoss(ignore_index=50256, reduction='none')
                     original_shift_labels = caption_tensor[:, 1:]
-                    truncate_after_period = bool(
+                    truncate_prefix = bool(
                         original_shift_labels.shape[0] > 0
                         and original_shift_labels[0, 0].item() != 50256
                         and (original_shift_labels[0] == 25).any().item())
@@ -1209,17 +1210,10 @@ class CM2(nn.Module):
                             event_boxes=query_event_boxes(event_boxes, feat_bigids[pair_start:pair_end]) if event_boxes is not None else None,
                             video_mask=dt['video_mask'], event_scores=proposal_confidence(others, feat_bigids[pair_start:pair_end]), anchor_boxes=proposal_anchors(others, feat_bigids[pair_start:pair_end]))
                         shift_logits = chunk_output.logits[..., :-1, :].contiguous()
-                        shift_labels = labels_chunk[..., 1:].contiguous().clone()
-
-                        # Preserve the original rule: ignore tokens through the
-                        # first period when the first reference contains a period.
-                        if truncate_after_period and shift_labels.shape[1] > 0:
-                            period_mask = shift_labels.eq(25)
-                            has_period = period_mask.any(dim=1)
-                            first_period = period_mask.float().argmax(dim=1)
-                            positions = torch.arange(shift_labels.shape[1], device=shift_labels.device)[None, :]
-                            ignored_prefix = (~has_period[:, None]) | (positions <= first_period[:, None])
-                            shift_labels[ignored_prefix] = 50256
+                        # Same guarded ':' prefix rule as supervised GPT-2 loss.
+                        # Use the full batch flag to preserve chunk independence.
+                        shift_labels = prepare_legacy_caption_targets(
+                            labels_chunk, truncate_prefix=truncate_prefix)
 
                         token_loss = loss_fct(
                             shift_logits.view(-1, shift_logits.size(-1)),

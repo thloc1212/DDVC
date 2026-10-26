@@ -67,6 +67,7 @@ case ${1:-help} in
   setup)
     logged adapter_cpu "$PY" smoke_test_activitynet_adapter.py
     logged temporal_pool_cpu "$PY" smoke_test_temporal_pooling.py
+    logged caption_targets "$PY" smoke_test_caption_targets.py --gpt2
     logged pid_guard "$PY" smoke_test_training_pid.py
     bash tools/dedup_molab.sh setup full no_dedup_same_merges
     ;;

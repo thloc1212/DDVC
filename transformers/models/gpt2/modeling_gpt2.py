@@ -29,6 +29,7 @@ from torch.cuda.amp import autocast
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 
 from ...activations import ACT2FN
+from ...caption_targets import prepare_legacy_caption_targets
 from ...modeling_outputs import (
     BaseModelOutputWithPastAndCrossAttentions,
     CausalLMOutputWithCrossAttentions,
@@ -1343,20 +1344,8 @@ class GPT2LMHeadModel(GPT2PreTrainedModel):
             labels = labels.to(lm_logits.device)
             # Shift so that tokens < n predict n
             shift_logits = lm_logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
-            # Flatten the tokens
-            # loss_fct = CrossEntropyLoss()
-            ##################################################
-            loss_fct = CrossEntropyLoss(ignore_index = 50256)
-            if shift_labels[0][0] != 50256 and 25 in shift_labels[0]:
-                for i in range(shift_labels.shape[0]):
-                    for j in range(shift_labels.shape[1]):
-                        if shift_labels[i][j] == 25:
-                            shift_labels[i][j] = 50256
-                            break
-                        shift_labels[i][j] = 50256
-            ##################################################
-
+            shift_labels = prepare_legacy_caption_targets(labels)
+            loss_fct = CrossEntropyLoss(ignore_index=50256)
             loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
 
         if not return_dict:
