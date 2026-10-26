@@ -5,10 +5,10 @@ trap 'echo "FAILED at line $LINENO. See output above and the logs directory." >&
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 WORK=$(dirname "$REPO")
 PY=${DDVC_PYTHON:-/tmp/uv-venv/bin/python}
-MODE=${2:-subset}
+MODE=${2:-full}
 case "$MODE" in subset|full) ;; *) echo 'Mode must be subset or full'; exit 1;; esac
-EXPERIMENT=${3:-dedup_softnms}
-case "$EXPERIMENT" in baseline|softnms|dedup_softnms|dedup_softnms_merge|dedup_softnms_merge_consecutive) ;; *) echo 'Invalid experiment'; exit 1;; esac
+EXPERIMENT=${3:-no_dedup_same_merges}
+case "$EXPERIMENT" in baseline|softnms|dedup_softnms|dedup_softnms_merge|dedup_softnms_merge_consecutive|no_dedup_same_merges) ;; *) echo 'Invalid experiment'; exit 1;; esac
 RUN=yc2_${MODE}_${EXPERIMENT}_e15_b1
 SMOKE_RUN=yc2_smoke_${EXPERIMENT}_e2_b1
 CFG="$WORK/prepared/$RUN/config.yml"
@@ -111,5 +111,5 @@ case ${1:-help} in
   status)
     if [[ -f "$WORK/logs/$RUN.pid" ]]; then ps -p "$(cat "$WORK/logs/$RUN.pid")" -o pid,etime,%cpu,%mem,args || true; fi
     tail -n 40 "$WORK/logs/$RUN.log" ;;
-  *) echo 'Usage: kaggle_molab.sh COMMAND [subset|full] [baseline|softnms|dedup_softnms|dedup_softnms_merge|dedup_softnms_merge_consecutive]; default subset dedup_softnms. Commands: setup prepare-smoke smoke train-smoke prepare-run train logs status report restage smoke-resume resume' ;;
+  *) echo 'Usage: dedup_molab.sh COMMAND [subset|full] [baseline|softnms|dedup_softnms|dedup_softnms_merge|dedup_softnms_merge_consecutive|no_dedup_same_merges]; default full no_dedup_same_merges. Commands: setup prepare-smoke smoke train-smoke prepare-run train logs status report restage smoke-resume resume' ;;
 esac

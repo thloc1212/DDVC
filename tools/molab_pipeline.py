@@ -211,15 +211,15 @@ def resolve_profile(args):
 
 
 def experiment_options(experiment):
-    if experiment not in ('baseline','softnms','dedup_softnms','dedup_softnms_merge','dedup_softnms_merge_consecutive'):
+    if experiment not in ('baseline','softnms','dedup_softnms','dedup_softnms_merge','dedup_softnms_merge_consecutive','no_dedup_same_merges'):
         raise ValueError('Unknown selection experiment')
     return dict(selection_experiment=experiment,
                 dedup_loss_coef=.1 if experiment.startswith('dedup_') else 0.,
                 dedup_start_epoch=1,dedup_iou_threshold=.5,dedup_confidence_threshold=.2,
                 eval_selection_method='topk' if experiment=='baseline' else 'softnms',
-                eval_softnms_sigma=.5,eval_merge_duplicates=experiment in ('dedup_softnms_merge','dedup_softnms_merge_consecutive'),
+                eval_softnms_sigma=.5,eval_merge_duplicates=experiment in ('dedup_softnms_merge','dedup_softnms_merge_consecutive','no_dedup_same_merges'),
                 eval_merge_iou=.7,eval_merge_text_similarity=.9,
-                eval_merge_consecutive=experiment.endswith('_consecutive'),
+                eval_merge_consecutive=experiment.endswith('_consecutive') or experiment=='no_dedup_same_merges',
                 eval_consecutive_gap=2.,eval_consecutive_max_span=60.,eval_consecutive_max_events=3)
 
 
@@ -521,7 +521,7 @@ def main():
     p.add_argument('--data-root',required=True);p.add_argument('--prepared-root',required=True)
     p.add_argument('--output-root',required=True);p.add_argument('--log-root',required=True)
     p.add_argument('--run-name',required=True);p.add_argument('--mode',choices=['smoke','subset','full'],default='full')
-    p.add_argument('--experiment',choices=['baseline','softnms','dedup_softnms','dedup_softnms_merge','dedup_softnms_merge_consecutive'],default='dedup_softnms')
+    p.add_argument('--experiment',choices=['baseline','softnms','dedup_softnms','dedup_softnms_merge','dedup_softnms_merge_consecutive','no_dedup_same_merges'],default='no_dedup_same_merges')
     p.add_argument('--epochs',type=int,default=15);p.add_argument('--accumulation',type=int,default=None)
     p.add_argument('--hardware-profile',choices=['legacy-cvpr2018'],default='legacy-cvpr2018')
     p.add_argument('--precision',choices=['fp32','bf16'],default=None)

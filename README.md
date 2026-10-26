@@ -1,3 +1,18 @@
+# DDVC experiments — default: no-dedup learned proposal mask
+
+This fork's primary Molab recipe trains DDVC from scratch on full feature-matched
+YouCook2 (1,237 train / 436 validation), for 15 epochs, seed 777, batch/accumulation 1,
+FP32, LR 5e-5. The learned CVPR-2018-inspired proposal mask is retained. Dedup loss
+is **off**; Soft-NMS and bounded overlap/consecutive merging are enabled only for
+output selection. Localization and caption modules both learn; the GPT-2 caption
+decoder is randomly initialized. CLIP features are pre-extracted.
+
+Start here: [Molab commands and Drive backup](docs/NO_DEDUP_MOLAB.md).
+The primary branch is `master`; this is an experimental fork, not the unchanged
+official implementation. Earlier experiments remain on their named branches.
+
+## Original DDVC project
+
 # [ACL 2025] Task-Specific Information Decomposition for End-to-End Dense Video Captioning
 
 This is the official codebase for our ACL 2025 paper:  

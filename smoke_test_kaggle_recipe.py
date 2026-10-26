@@ -70,9 +70,20 @@ def main():
             for n in updates:
                 exec(compile(ast.Module(body=[n], type_ignores=[]), '<actual prepare config>', 'exec'), namespace)
             assert validate(opts, mode) == [8, 11]
-            for experiment in ['baseline','softnms','dedup_softnms','dedup_softnms_merge','dedup_softnms_merge_consecutive']:
+            for experiment in ['baseline','softnms','dedup_softnms','dedup_softnms_merge','dedup_softnms_merge_consecutive','no_dedup_same_merges']:
                 variant=copy.deepcopy(opts);variant.update(namespace['experiment_options'](experiment))
                 assert validate(variant,mode)==[8,11]
+                if experiment=='no_dedup_same_merges':
+                    assert variant['dedup_loss_coef']==0
+                    assert variant['eval_merge_duplicates'] and variant['eval_merge_consecutive']
+                    assert variant['eval_selection_method']=='softnms'
+                    assert not variant.get('only_ft_captioner',False)
+                    assert not variant.get('only_ft_class_head',False)
+                    assert not variant.get('start_from') and not variant.get('pretrain')
+                    invalid=copy.deepcopy(variant);invalid['dedup_loss_coef']=.1
+                    try:validate(invalid,mode)
+                    except ValueError:pass
+                    else:raise AssertionError('No-dedup mode accepted active dedup loss')
             for key, value in [('epoch',25),('lr',1e-4),('gradient_accumulation_steps',8),
                                ('mask_prune_threshold',.05),('learned_proposal_mask',False)]:
                 bad=copy.deepcopy(opts);bad[key]=value
