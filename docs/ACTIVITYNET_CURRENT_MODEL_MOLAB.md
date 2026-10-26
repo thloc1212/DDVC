@@ -1,4 +1,4 @@
-# Model hiện tại trên ActivityNet Captions — Molab + Drive
+# Model hiện tại trên ActivityNet Captions — 10 queries — Molab + Drive
 
 Branch: https://github.com/thloc1212/DDVC/tree/exp/activitynet-current-model
 
@@ -7,11 +7,11 @@ Branch: https://github.com/thloc1212/DDVC/tree/exp/activitynet-current-model
 Giữ kiến trúc/model của run YouCook2 no-dedup: learned gated proposal mask bật,
 dedup loss bằng 0, retrieval bật, Soft-NMS sigma 0.5 và overlap/consecutive merge
 bật. GPT-2 khởi tạo ngẫu nhiên, localization và caption cùng train từ đầu. Không
-load checkpoint YouCook2. Giữ **50 queries**, batch/accumulation 1, FP32 TF32 off,
+load checkpoint YouCook2. Dùng **10 queries**, batch/accumulation 1, FP32 TF32 off,
 15 epoch, seed 777, Adam LR 5e-5, WD 1e-4, milestones 8/11 gamma 0.5, chunk 16.
 
-Đây là **model hiện tại chuyển dataset**, không phải tái hiện nguyên recipe
-ActivityNet của paper DDVC (paper dùng 10 queries). Không thay nội dung các
+Đây là **model hiện tại chuyển dataset và dùng 10 queries theo ActivityNet**, không
+phải tái hiện toàn bộ DDVC gốc vì vẫn giữ learned mask/retrieval/selection mở rộng. Không thay nội dung các
 module forward, caption/mask, matcher, loss, optimizer hoặc selection. Thêm
 adapter dữ liệu và đọc archive features qua mmap để hạn chế nhân đôi RAM.
 
@@ -47,13 +47,40 @@ git clone --single-branch --branch exp/activitynet-current-model https://github.
 ```
 
 Không clone/giải nén đè thư mục có source/checkpoint cũ. ZIP đi kèm có cùng layout
-`DDVC_ActivityNet/source/`; nếu dùng ZIP thay Git, upload nó vào /marimo rồi:
+`DDVC_ActivityNet/source/`; nếu dùng ZIP thay Git, upload bản Q10 vào /marimo rồi:
 
 ```bash
-/tmp/uv-venv/bin/python -m zipfile -e /marimo/DDVC_ActivityNet_Current_Model.zip /marimo
+/tmp/uv-venv/bin/python -m zipfile -e /marimo/DDVC_ActivityNet_Current_Model_Q10.zip /marimo
 ```
 
 Chỉ dùng một trong hai cách lấy source.
+
+### Nếu đã clone bản 50 queries trong cùng session
+
+Chờ/dừng tiến trình training 50-query trước; không chạy hai run cùng GPU. Không
+kill tiến trình Python khác bằng pkill. Nếu muốn dừng đúng run cũ, dùng PID đã lưu:
+
+```bash
+if [ -f /marimo/DDVC_ActivityNet/logs/anet_full_current_model_e15_b1.pid ]; then
+  ps -p "$(cat /marimo/DDVC_ActivityNet/logs/anet_full_current_model_e15_b1.pid)" -o pid,args
+fi
+```
+
+Chỉ khi dòng args đúng train.py/config run 50-query cũ, dùng `kill -INT PID` với
+PID đó. Kiểm tra tiến trình đã dừng trước khi chạy Q10. Checkpoint cũ được giữ,
+nhưng không thể exact-resume nó với số query khác.
+
+```bash
+git -C /marimo/DDVC_ActivityNet/source pull --ff-only
+```
+
+Không cần chạy lại setup/build CUDA nếu cùng session đã setup thành công. Sau đó
+chạy lại prepare-smoke, smoke, prepare-run, train ở các mục dưới. Tên run mới thêm
+`q10`, tên smoke marker cũng riêng. Launcher tự dùng lại annotations/features/vocab/
+bank của prepared 50-query khi có config cũ; **không load model hoặc optimizer cũ**.
+Nếu prepared cũ không có, tạo dữ liệu như bình thường. Cache feature gốc vẫn dùng lại.
+Nếu dùng ZIP trước đó, tải bản Q10 rồi chép đúng hai file tools/activitynet_pipeline.py
+và tools/activitynet_molab.sh từ bản Q10 vào source cũ; không giải nén đè cả thư mục run.
 
 ## 2. Setup native Molab
 
@@ -132,7 +159,7 @@ from drive_backup import DriveBackup as _AnetBackup
 
 anet_backup = _AnetBackup(
     _anet_fs, work=_anet_work,
-    remote_root='runs/ddvc_activitynet_current_model_e15', interval=120,
+    remote_root='runs/ddvc_activitynet_current_model_q10_e15', interval=120,
 )
 anet_backup.start()
 ```
@@ -148,7 +175,7 @@ LC_ALL=C bash /marimo/DDVC_ActivityNet/source/tools/activitynet_molab.sh train f
 ```
 
 ```bash
-tail -n 80 -f /marimo/DDVC_ActivityNet/logs/anet_full_current_model_e15_b1.log
+tail -n 80 -f /marimo/DDVC_ActivityNet/logs/anet_full_current_model_q10_e15_b1.log
 ```
 
 ```bash
@@ -156,12 +183,12 @@ LC_ALL=C bash /marimo/DDVC_ActivityNet/source/tools/activitynet_molab.sh report 
 ```
 
 Nếu chọn subset, thay `full` bằng `subset` ở lệnh train/report và log tên
-`anet_subset_current_model_e15_b1.log`. Launcher không tự resume hoặc đè run có sẵn.
+`anet_subset_current_model_q10_e15_b1.log`. Launcher không tự resume hoặc đè run có sẵn.
 Ctrl+C chỉ thoát tail. Log không xuất liên tục lúc evaluator/Java chạy không đủ
 để kết luận treo; xem tiến trình trước khi dừng.
 
-Output full: `/marimo/DDVC_ActivityNet/runs/anet_full_current_model_e15_b1/`.
-Output subset: `/marimo/DDVC_ActivityNet/runs/anet_subset_current_model_e15_b1/`.
+Output full: `/marimo/DDVC_ActivityNet/runs/anet_full_current_model_q10_e15_b1/`.
+Output subset: `/marimo/DDVC_ActivityNet/runs/anet_subset_current_model_q10_e15_b1/`.
 Metric CIDEr, BLEU-4, METEOR, SODA_c, Precision/Recall và MetaScore nằm trong
 info.json/prediction. F1 có thể tính từ aggregate Precision/Recall, ghi rõ công thức.
 Model-best chọn METEOR+SODA_c, không nhất thiết max CIDEr. Prediction đã selection

@@ -105,7 +105,7 @@ def make_config(prepared,run_id,save_root,mode,vocab_size,signature):
     cfg=json.loads((ROOT/'tools/kaggle_mask_recipe.json').read_text())
     cfg.update(helper.experiment_options('no_dedup_same_merges'))
     data=prepared/'data/anet';anno=data/'captiondata'
-    cfg.update(experiment_recipe='activitynet_current_model',dataset='anet',target_domain='anet',bank_type=['anet'],
+    cfg.update(experiment_recipe='activitynet_current_model_q10',dataset='anet',target_domain='anet',bank_type=['anet'],num_queries=10,
         cfg_path='',id=run_id,exp_name=run_id,fixed_run_id=True,save_dir=str(save_root),
         start_from='',pretrain=None,train_caption_file=str(anno/'train.json'),val_caption_file=str(anno/'val.json'),
         visual_feature_folder=[str(data/'features/clipvitl14.pth')],
@@ -139,7 +139,7 @@ def validate_config(cfg):
     if set(train)&set(val):raise ValueError('Train/validation leakage')
     refs=[json.loads(Path(p).read_text()) for p in cfg['gt_file_for_eval']]
     if set().union(*(set(r) for r in refs))!=set(val):raise ValueError('Validation reference IDs differ from loader IDs')
-    print('ACTIVITYNET_CURRENT_MODEL_OK',len(train),'train',len(val),'validation; 50 queries; dedup OFF; mask/Soft-NMS/merges ON',flush=True)
+    print('ACTIVITYNET_CURRENT_MODEL_OK',len(train),'train',len(val),'validation; 10 queries; dedup OFF; mask/Soft-NMS/merges ON',flush=True)
 
 
 def ensure_feature_file(path):
@@ -229,8 +229,8 @@ def prepare(args):
         feature_drive_id=FEATURE_ID,feature_source=str(source),feature_bytes=source.stat().st_size,
         coverage=coverage,dropped_invalid_training_events=dropped,train_ids=list(train),val_ids=list(val),
         reference_counts=[len(r) for r in refs],data_signature=signature,
-        protocol='Same current model/50 queries; val_1 loader with val_2 fallback; both references evaluated separately',
-        note='No YouCook2 checkpoint, vocabulary or memory bank reused; not original paper ActivityNet query setting'))
+        protocol='Current model with 10 queries; val_1 loader with val_2 fallback; both references evaluated separately',
+        note='No YouCook2 checkpoint, vocabulary or memory bank reused; retained learned mask/retrieval/selection extensions'))
     path=prepared/'config.yml';path.write_text(yaml.safe_dump(cfg,sort_keys=False))
     print('CONFIG_READY',path,flush=True)
 
@@ -246,6 +246,31 @@ def restage(args):
     print('RESTAGED',len(ids),'ActivityNet videos',flush=True)
 
 
+def configure_q10(args):
+    """Reuse prepared ActivityNet assets; start a distinct 10-query training run."""
+    import yaml
+    source=args.source_config.resolve()
+    cfg=yaml.safe_load(source.read_text())
+    if cfg.get('dataset')!='anet' or cfg.get('bank_type')!=['anet']:
+        raise ValueError('Only reuse ActivityNet assets, never YouCook2')
+    cfg.update(num_queries=10,experiment_recipe='activitynet_current_model_q10',
+               id=args.run_name,exp_name=args.run_name,save_dir=str(args.work.resolve()/'runs'),
+               start_from='',start_from_mode='last',pretrain=None,cfg_path='')
+    cfg.pop('current_lr',None)
+    validate_config(cfg)
+    target=args.work.resolve()/'prepared'/args.run_name
+    if (target/'config.yml').exists():raise FileExistsError(target/'config.yml')
+    if (Path(cfg['save_dir'])/args.run_name).exists():raise FileExistsError('New run directory already exists')
+    target.mkdir(parents=True,exist_ok=True)
+    dump(target/'run_manifest.json',dict(source_commit=load_helper().revision(),
+        reused_prepared_config=str(source),source_manifest=str(source.parent/'run_manifest.json'),
+        data_signature=cfg['data_signature'],num_queries=10,
+        note='Fresh model/optimizer; references/features/vocabulary/bank reuse only; no DDVC weights loaded'))
+    (target/'config.yml').write_text(yaml.safe_dump(cfg,sort_keys=False))
+    print('REUSED_PREPARED_ASSETS',source,flush=True)
+    print('CONFIG_READY',target/'config.yml',flush=True)
+
+
 def main():
     parser=argparse.ArgumentParser(__doc__);sub=parser.add_subparsers(dest='command',required=True)
     p=sub.add_parser('prepare');p.add_argument('--work',type=Path,required=True)
@@ -253,11 +278,13 @@ def main():
     p.add_argument('--features',type=Path);p.add_argument('--data-root',type=Path)
     p=sub.add_parser('check');p.add_argument('--config',type=Path,required=True)
     p=sub.add_parser('restage');p.add_argument('--work',type=Path,required=True);p.add_argument('--config',type=Path,required=True);p.add_argument('--features',type=Path)
+    p=sub.add_parser('configure-q10');p.add_argument('--work',type=Path,required=True);p.add_argument('--run-name',required=True);p.add_argument('--source-config',type=Path,required=True)
     args=parser.parse_args()
-    if args.command=='prepare':
+    if args.command in ('prepare','configure-q10'):
         import re
         if not re.fullmatch(r'[A-Za-z0-9_-]+',args.run_name):raise ValueError('Unsafe run-name')
-        prepare(args)
+        if args.command=='prepare':prepare(args)
+        else:configure_q10(args)
     elif args.command=='restage':restage(args)
     else:
         import yaml

@@ -40,14 +40,26 @@ def main():
         signature=hashlib.sha256(b''.join(p.read_bytes() for p in [caption/'train.json',caption/'val.json',data/'vocabulary_activitynet.json'])).hexdigest()
         cfg=adapter.make_config(root,'run',root/'runs','full',len(vocab['word_to_ix']),signature)
         adapter.validate_config(cfg)
-        for k,v in dict(num_queries=50,learned_proposal_mask=True,dedup_loss_coef=0.,
+        for k,v in dict(num_queries=10,learned_proposal_mask=True,dedup_loss_coef=0.,
             eval_merge_consecutive=True,eval_merge_duplicates=True,epoch=15,lr=5e-5,
             gradient_accumulation_steps=1,precision='fp32',feature_dim=768,able_ret=True).items():assert cfg[k]==v,(k,cfg[k])
-        for key,value in [('num_queries',10),('dedup_loss_coef',.1),('learned_proposal_mask',False),('lr',1e-4)]:
+        for key,value in [('num_queries',50),('dedup_loss_coef',.1),('learned_proposal_mask',False),('lr',1e-4)]:
             broken=dict(cfg);broken[key]=value
             try:adapter.validate_config(broken)
             except ValueError:pass
             else:raise AssertionError('Recipe drift accepted: '+key)
+        # The Q50 -> Q10 adapter must retain data/bank paths and reset only run/load state.
+        import yaml
+        from types import SimpleNamespace
+        old=dict(cfg,num_queries=50,experiment_recipe='activitynet_current_model',
+                 id='old_q50',start_from='old_q50',pretrain='encoder',current_lr=1.25e-5)
+        source=root/'old_config.yml';source.write_text(yaml.safe_dump(old))
+        adapter.configure_q10(SimpleNamespace(source_config=source,work=root,run_name='new_q10'))
+        recovered=yaml.safe_load((root/'prepared/new_q10/config.yml').read_text())
+        assert recovered['num_queries']==10 and not recovered['start_from'] and recovered['pretrain'] is None
+        assert 'current_lr' not in recovered
+        for key in ('bank_path','train_caption_file','val_caption_file','visual_feature_folder','dict_file','data_signature'):
+            assert recovered[key]==old[key],key
         adapter.dump(caption/'val_2.json',{})
         try:adapter.validate_config(cfg)
         except ValueError:pass
