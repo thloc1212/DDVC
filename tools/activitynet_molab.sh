@@ -60,9 +60,14 @@ PY
     "$PY" - "$WORK/runs/$RUN" "$CFG" <<'PY'
 import sys
 from pathlib import Path
+from datetime import datetime
 import yaml
 run=Path(sys.argv[1]);cfg=yaml.safe_load(Path(sys.argv[2]).read_text())
-if run.exists():raise FileExistsError('Run directory already exists. Preserve it; use resume for existing checkpoints.')
+if run.exists():
+    if list(run.glob('*.pth')):raise FileExistsError('Run has checkpoints. Use resume; do not overwrite trained weights.')
+    preserved=run.with_name(run.name+'_failed_start_'+datetime.now().strftime('%Y%m%d_%H%M%S_%f'))
+    run.rename(preserved)
+    print('PRESERVED_FAILED_START',preserved)
 assert not cfg.get('start_from') and not cfg.get('pretrain'), 'Fresh training requested but load/resume is configured'
 assert not cfg.get('only_ft_captioner') and not cfg.get('only_ft_class_head')
 print('FRESH_ACTIVITYNET_CURRENT_MODEL_PASS')
@@ -75,6 +80,7 @@ PY
 case ${1:-help} in
   setup)
     logged adapter_cpu "$PY" smoke_test_activitynet_adapter.py
+    logged temporal_pool_cpu "$PY" smoke_test_temporal_pooling.py
     bash tools/dedup_molab.sh setup full no_dedup_same_merges
     ;;
   prepare-smoke) test -f "$WORK/provenance/cuda_ready"; prepare smoke "$SMOKE_RUN" ;;

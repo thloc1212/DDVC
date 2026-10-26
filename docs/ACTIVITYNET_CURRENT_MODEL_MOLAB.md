@@ -11,8 +11,11 @@ load checkpoint YouCook2. Dùng **10 queries**, batch/accumulation 1, FP32 TF32 
 15 epoch, seed 777, Adam LR 5e-5, WD 1e-4, milestones 8/11 gamma 0.5, chunk 16.
 
 Đây là **model hiện tại chuyển dataset và dùng 10 queries theo ActivityNet**, không
-phải tái hiện toàn bộ DDVC gốc vì vẫn giữ learned mask/retrieval/selection mở rộng. Không thay nội dung các
-module forward, caption/mask, matcher, loss, optimizer hoặc selection. Thêm
+phải tái hiện toàn bộ DDVC gốc vì vẫn giữ learned mask/retrieval/selection mở rộng.
+Giữ caption/mask, matcher, loss weights, optimizer và selection. Có một sửa lỗi
+số học được ghi rõ: GT interval có thể thành [i,i] sau làm tròn frame index dù
+thời lượng dương. Loss visual alignment nay lấy ít nhất một frame hợp lệ thay
+vì mean(empty)=NaN; mọi slice hợp lệ không rỗng giữ nguyên phép tính cũ. Thêm
 adapter dữ liệu và đọc archive features qua mmap để hạn chế nhân đôi RAM.
 
 Soft-NMS/merge vẫn giữ theo yêu cầu, chưa có bằng chứng chúng tốt trên ActivityNet.
@@ -183,7 +186,9 @@ LC_ALL=C bash /marimo/DDVC_ActivityNet/source/tools/activitynet_molab.sh report 
 ```
 
 Nếu chọn subset, thay `full` bằng `subset` ở lệnh train/report và log tên
-`anet_subset_current_model_q10_e15_b1.log`. Launcher không tự resume hoặc đè run có sẵn.
+`anet_subset_current_model_q10_e15_b1.log`. Launcher không tự resume hoặc đè checkpoint.
+Nếu chỉ là run khởi động thất bại chưa có .pth, launcher giữ nguyên folder cũ với
+đuôi `_failed_start_<timestamp>` rồi cho train lại từ đầu. Không xoá evidence.
 Ctrl+C chỉ thoát tail. Log không xuất liên tục lúc evaluator/Java chạy không đủ
 để kết luận treo; xem tiến trình trước khi dừng.
 
@@ -225,8 +230,32 @@ LC_ALL=C bash /marimo/DDVC_ActivityNet/source/tools/activitynet_molab.sh resume 
 - Kiểm tra annotation thật ở commit PDVC đã pin: split/ref counts, hai event lỗi.
 - CPU tests cho aliases video IDs, features sai shape/ID trùng, leakage,
   giữ reference riêng, vocabulary chỉ từ train, config drift và mmap giữ tensor values.
-- Legacy model identity test: backbone/caption/mask source giữ nguyên.
+- Legacy model identity test: caption/mask giữ nguyên; backbone chỉ thêm đúng
+  sửa lỗi pooling đoạn GT rỗng đã mô tả, không thay cấu trúc mạng/loss weights.
 - CPU regression recipe YouCook2 và shell syntax/LF checks.
 - **Chưa tải full ActivityNet features hoặc chạy GPU full train trên local**.
   Molab smoke là điều kiện bắt buộc trước khi train; không có metric ActivityNet mới
   hoặc cam kết tái hiện điểm paper trong gói này.
+
+## Lỗi non-finite ngay epoch đầu
+
+Không tắt finite guard và không giảm LR khi chưa biết loss nào lỗi. Cập nhật source:
+
+```bash
+git -C /marimo/DDVC_ActivityNet/source pull --ff-only
+```
+
+Quét đúng frame length trong file features đã chuẩn bị, không load model/GPU:
+
+```bash
+/tmp/uv-venv/bin/python /marimo/DDVC_ActivityNet/source/tools/check_temporal_spans.py --config /marimo/DDVC_ActivityNet/prepared/anet_full_current_model_q10_e15_b1/config.yml
+/tmp/uv-venv/bin/python /marimo/DDVC_ActivityNet/source/smoke_test_temporal_pooling.py
+```
+
+`EMPTY_GT_FRAME_SLICES` đếm event bị collapse sau quantization. Các event này không
+bị bỏ khỏi data; pool lấy frame gần nhất. Không cần download features hay build
+CUDA lại vì chỉ đổi Python. Chạy lại smoke rồi `train full` nếu chưa có checkpoint;
+nếu đã có model-last.pth thì smoke-resume/resume. Guard vẫn dừng trước update nếu
+NaN/Inf; khi đó file `runs/<run>/nonfinite_diagnostics.json` ghi video ID, bad loss
+terms, raw captions, quantized GT spans và tình trạng finite của video tensor.
+Gửi file đó để xác định nguyên nhân thực sự, không khẳng định mọi NaN đều do pooling.

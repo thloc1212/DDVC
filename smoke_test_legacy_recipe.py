@@ -13,6 +13,11 @@ def main():
         data=(root/rel).read_bytes().replace(b'\r\n',b'\n')
         if rel.endswith('ddvc_ret_encdec_clip_capQ.py'):
             data=data.replace(b"    if getattr(args, 'dedup_loss_coef', 0.) > 0:\n        weight_dict['loss_dedup'] = args.dedup_loss_coef\n",b'')
+            # Explicit numeric repair: empty quantized GT slices now use one
+            # valid frame. Apart from this exact call, retain legacy identity.
+            data=data.replace(b'from .temporal_pooling import pool_temporal_segments\n',b'')
+            data=data.replace(b'        taget_feature=pool_temporal_segments(dt["video_tensor"].squeeze(0), [dt["gt_featstamps"][gt_id] for gt_id in indices[0][1].tolist()])\n',
+                b'        taget_feature=torch.vstack([torch.mean(dt["video_tensor"].squeeze(0)[dt["gt_featstamps"][gt_id][0]:dt["gt_featstamps"][gt_id][1]],dim=0) for gt_id in indices[0][1].tolist()])\n')
         data=data.replace(b"GPT2Tokenizer.from_pretrained('/DATA_DISK/plm_cache/gpt2')",b"GPT2Tokenizer.from_pretrained('gpt2')")
         assert hashlib.sha256(data).hexdigest()==expected, 'Legacy model source changed: '+rel
     spec=importlib.util.spec_from_file_location('legacy_cli',root/'tools/molab_pipeline.py')
@@ -24,6 +29,6 @@ def main():
         try:cli.resolve_profile(SimpleNamespace(hardware_profile='legacy-cvpr2018',**override))
         except ValueError:pass
         else:raise AssertionError('Silent legacy profile change: '+str(override))
-    print('PASS caption/mask and baseline backbone match original ZIP; only tested additive dedup weight allowed; legacy profile guards')
+    print('PASS caption/mask and baseline backbone match original ZIP except explicit dedup registration and empty-GT pooling repair; legacy profile guards')
 
 if __name__=='__main__':main()

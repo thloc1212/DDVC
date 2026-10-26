@@ -35,6 +35,7 @@ from ret_utils import load_clip_memory_bank, load_clip_gt
 from misc.training_state import (atomic_save, capture_rng, restore_rng, snapshot,
                                  schedule_contrastive, validate_resume)
 from misc.runtime_perf import amp_context,configure_runtime,vram_metrics,append_performance
+from misc.nonfinite_diagnostics import report_nonfinite_loss
 
 # global clip_gt
 def train(opt):
@@ -236,7 +237,10 @@ def train(opt):
                     output, loss = model(dt, criterion,contrastive_criterion, opt.transformer_input_type,memory_bank)
             
             final_loss = sum(loss[k].float() * weight_dict[k] for k in loss.keys() if k in weight_dict)
-            if not torch.isfinite(final_loss):raise RuntimeError('Non-finite training loss; stopping before optimizer update')
+            if not torch.isfinite(final_loss):
+                diagnostic_path,bad_terms=report_nonfinite_loss(loss,weight_dict,dt,save_folder,epoch,batch_index,iteration)
+                logger.error('NONFINITE_LOSS video=%s bad_terms=%s diagnostics=%s',dt.get('video_key'),bad_terms,diagnostic_path)
+                raise RuntimeError('Non-finite training loss; stopped before optimizer update. See '+str(diagnostic_path))
             # Normalize each accumulation window by its actual video count, including the final partial window.
             window_start = (batch_index // accumulation) * accumulation
             window_length = min(accumulation, len(train_loader) - window_start)

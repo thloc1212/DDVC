@@ -20,6 +20,7 @@ from misc.detr_utils import box_ops
 from misc.detr_utils.misc import (inverse_sigmoid)
 
 from .matcher import build_matcher_cl
+from .temporal_pooling import pool_temporal_segments
 
 from .deformable_transformer import build_deforamble_transformer
 from ddvc.CaptioningHead import build_captioner
@@ -998,7 +999,7 @@ class CM2(nn.Module):
 
 
         # hs_sel=hs_lid_loc.squeeze(0)[indices[0][0]]
-        taget_feature=torch.vstack([torch.mean(dt["video_tensor"].squeeze(0)[dt["gt_featstamps"][gt_id][0]:dt["gt_featstamps"][gt_id][1]],dim=0) for gt_id in indices[0][1].tolist()])
+        taget_feature=pool_temporal_segments(dt["video_tensor"].squeeze(0), [dt["gt_featstamps"][gt_id] for gt_id in indices[0][1].tolist()])
         # loss_loc_cl=contrastive_loss_cosine_single_direction(hs_sel,taget_feature)
         y = taget_feature.unsqueeze(0).unsqueeze(1)       # (1,1,envNum,768)
         y = y.repeat(2, 1, 1, 1)
