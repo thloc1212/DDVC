@@ -79,6 +79,12 @@ def snapshot(model, optimizer, scheduler, epoch, iteration, info, config, phase,
 
 
 def validate_resume(config, previous):
+    # Concept vocabulary meaning and method must stay fixed across a resume.
+    if config.get('event_concepts',False) or previous.get('event_concepts',False):
+        for key in ('event_concepts','concept_condition_prefix','concept_vocab_sha256',
+                    'concept_loss_coef','concept_hidden_dim','concept_embedding_dim'):
+            if config.get(key) != previous.get(key):
+                raise ValueError('Resume concept recipe changed: '+key)
     if config.get('gradient_accumulation_steps', 1) != previous.get('gradient_accumulation_steps', 1):
         raise ValueError('Resume effective batch changed; start a new run for a batch ablation.')
     for key,default in [('precision','fp32'),('allow_tf32',False),('nthreads',0),('pin_memory',False)]:

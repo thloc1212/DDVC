@@ -405,6 +405,15 @@ def parse_opts(argv=None, write_options=True):
     parser.add_argument('--contrastive_loss_coef', type=float, default=0.50)
     
 
+    # Optional event-concept experiment; disabled for every existing recipe.
+    parser.add_argument('--event_concepts', action='store_true', default=False)
+    parser.add_argument('--concept_condition_prefix', action='store_true', default=False)
+    parser.add_argument('--concept_vocab_path', type=str, default='')
+    parser.add_argument('--concept_vocab_sha256', type=str, default='')
+    parser.add_argument('--concept_loss_coef', type=float, default=.1)
+    parser.add_argument('--concept_hidden_dim', type=int, default=256)
+    parser.add_argument('--concept_embedding_dim', type=int, default=128)
+
     # reranking
     args = parser.parse_args(argv)
 

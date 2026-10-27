@@ -1,5 +1,15 @@
 # DDVC experiments — default: no-dedup learned proposal mask
 
+## This branch: event-concept experiment, 8 epochs
+
+`exp/event-concept-caption-e8` adds train-only event word-concept supervision and
+predicted-concept GPT-2 prefix conditioning. The module is shared by ActivityNet
+and YouCook2; the decoder remains randomly initialized. Existing flags default
+to concepts disabled. New experiment results are pending.
+
+Start here: [8-epoch Molab commands, runtime/data reuse and Drive backup](docs/EVENT_CONCEPT_E8_MOLAB.md).
+
+
 This fork's primary Molab recipe trains DDVC from scratch on full feature-matched
 YouCook2 (1,237 train / 436 validation), for 15 epochs, seed 777, batch/accumulation 1,
 FP32, LR 5e-5. The learned CVPR-2018-inspired proposal mask is retained. Dedup loss

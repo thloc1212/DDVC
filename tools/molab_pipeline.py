@@ -156,6 +156,13 @@ def smoke(args):
             total=sum(v.float()*criterion.weight_dict[k] for k,v in loss.items() if k in criterion.weight_dict)
         if not torch.isfinite(total):raise RuntimeError('Non-finite smoke loss')
         total.backward()
+        if getattr(opt,'event_concepts',False):
+            gradients=[p.grad for name,p in model.named_parameters()
+                       if '.event_concepts.classifier.' in name and p.grad is not None]
+            if 'loss_event_concept' not in loss or not gradients or not any(g.abs().sum()>0 for g in gradients):
+                raise RuntimeError('Concept supervision did not reach its classifier')
+            print('CONCEPT_GRADIENT_PASS',float(loss['loss_event_concept'].detach()),
+                  'coverage',float(loss['concept_target_coverage']),flush=True)
         if any(not torch.isfinite(p.grad).all() for p in model.parameters() if p.grad is not None):
             raise RuntimeError('Non-finite smoke gradients')
         torch.cuda.synchronize();elapsed=time.perf_counter()-started

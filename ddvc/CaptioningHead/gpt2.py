@@ -22,6 +22,9 @@ import torch.nn as nn
 from transformers import  GPT2Config, GPT2Model, GPT2Tokenizer, GPT2LMHeadModel
 from .local_visual import event_visual_mask
 from .proposal_mask import LearnedGatedProposalMask
+# BEGIN EVENT_CONCEPT_EXTENSION
+from .event_concepts import EventConceptConditioner
+# END EVENT_CONCEPT_EXTENSION
 
 class GPT2CaptionModel(nn.Module):
     def __init__(self, opt):
@@ -47,6 +50,24 @@ class GPT2CaptionModel(nn.Module):
                 self.proposal_mask = LearnedGatedProposalMask(opt.proposal_mask_bins, opt.proposal_mask_encoding_dim)
 
         self.prefix_token=self.tokenizer("<|endoftext|>",return_tensors="pt")["input_ids"].to(opt.device)
+# BEGIN EVENT_CONCEPT_EXTENSION
+        self.event_concepts = None
+        if getattr(opt, 'event_concepts', False):
+            if not opt.add_cross_attention:
+                raise ValueError('Event-concept experiment requires visual cross attention')
+            # Do not perturb initialization of any existing DDVC parameter.
+            with torch.random.fork_rng(devices=[]):
+                torch.default_generator.manual_seed(1732)
+                self.event_concepts = EventConceptConditioner(opt)
+
+    def concept_objective(self, hs, features, boxes, video_mask, captions):
+        if self.event_concepts is None: raise RuntimeError('Concept head is disabled')
+        result = self.event_concepts.objective(hs,features,boxes,video_mask,captions)
+        with torch.no_grad():
+            base_norm = self.input_project(hs).float().norm(dim=-1).mean().clamp_min(1e-8)
+            result['concept_prefix_ratio'] = result['concept_prefix_norm']/base_norm
+        return result
+# END EVENT_CONCEPT_EXTENSION
 
 
     def input_project(self,hs):
@@ -84,6 +105,11 @@ class GPT2CaptionModel(nn.Module):
                 event_boxes=None, video_mask=None, event_scores=None, anchor_boxes=None):
         prefix_emb = self.relu(self.fc1(hs))
         prefix_emb = self.fc2(prefix_emb)
+# BEGIN EVENT_CONCEPT_EXTENSION
+        if self.event_concepts is not None:
+            _, delta = self.event_concepts(hs,clip_fram_feature,event_boxes,video_mask)
+            prefix_emb = prefix_emb + delta[:,None].to(prefix_emb.dtype)
+# END EVENT_CONCEPT_EXTENSION
         input_emb=self.model.transformer.wte(cap_label)
         input_emb[:,:1,:]=prefix_emb
         if self.opt.add_cross_attention==False:
@@ -103,6 +129,11 @@ class GPT2CaptionModel(nn.Module):
         with torch.no_grad():
             prefix_emb = self.relu(self.fc1(hs))
             prefix_emb = self.fc2(prefix_emb)
+# BEGIN EVENT_CONCEPT_EXTENSION
+            if self.event_concepts is not None:
+                _, delta = self.event_concepts(hs,clip_fram_feature,event_boxes,video_mask)
+                prefix_emb = prefix_emb + delta[:,None].to(prefix_emb.dtype)
+# END EVENT_CONCEPT_EXTENSION
             seqNum_prefix_token=self.prefix_token.repeat(hs.shape[0], 1)
             input_emb=self.model.transformer.wte(seqNum_prefix_token)
             input_emb[:,:1,:]=prefix_emb

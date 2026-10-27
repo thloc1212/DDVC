@@ -976,6 +976,17 @@ class CM2(nn.Module):
                 if l_id != hs.shape[0] - 1:
                     l_dict = {k + f'_{l_id}': v for k, v in l_dict.items()}
                 loss.update(l_dict)
+# BEGIN EVENT_CONCEPT_EXTENSION
+                if getattr(self.opt, 'event_concepts', False) and l_id == hs.shape[0]-1:
+                    # GT captions create auxiliary targets only AFTER Hungarian matching.
+                    query_ids, caption_ids = indices[0]
+                    query_ids = query_ids.to(hs_lid_cap.device)
+                    matched_hs = hs_lid_cap[0].index_select(0,query_ids).unsqueeze(1)
+                    matched_boxes = outputs_coords[l_id][0].index_select(0,query_ids)
+                    matched_captions = [dt['cap_raw'][0][i] for i in caption_ids.tolist()]
+                    loss.update(self.caption_head[l_id].concept_objective(
+                        matched_hs,dt['video_tensor'],matched_boxes,dt['video_mask'],matched_captions))
+# END EVENT_CONCEPT_EXTENSION
 
             out.update({'caption_probs': cap_probs, 'seq': seq})
 
@@ -1554,6 +1565,12 @@ def build(args):
         weight_dict.update(aux_weight_dict)
     if getattr(args, 'learned_proposal_mask', False):
         weight_dict['loss_proposal_mask'] = args.proposal_mask_loss_coef
+# BEGIN EVENT_CONCEPT_EXTENSION
+    if getattr(args, 'event_concepts', False):
+        if not args.aux_loss: raise ValueError('Concept experiment preserves the existing auxiliary decoder recipe')
+        if args.concept_loss_coef <= 0: raise ValueError('Concept loss coefficient must be positive')
+        weight_dict['loss_event_concept'] = args.concept_loss_coef
+# END EVENT_CONCEPT_EXTENSION
     if getattr(args, 'dedup_loss_coef', 0.) > 0:
         weight_dict['loss_dedup'] = args.dedup_loss_coef
     losses = ['labels', 'boxes', 'cardinality']

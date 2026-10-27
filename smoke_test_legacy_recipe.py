@@ -11,6 +11,9 @@ def main():
     root=Path(__file__).parent
     for rel,expected in EXPECTED.items():
         data=(root/rel).read_bytes().replace(b'\r\n',b'\n')
+        # New experiment is opt-in. Verify archived bytes outside its explicit blocks.
+        import re
+        data=re.sub(rb'(?ms)^# BEGIN EVENT_CONCEPT_EXTENSION\n.*?^# END EVENT_CONCEPT_EXTENSION\n',b'',data)
         if rel.endswith('ddvc_ret_encdec_clip_capQ.py'):
             data=data.replace(b"    if getattr(args, 'dedup_loss_coef', 0.) > 0:\n        weight_dict['loss_dedup'] = args.dedup_loss_coef\n",b'')
             # Explicit numeric repair: empty quantized GT slices now use one
