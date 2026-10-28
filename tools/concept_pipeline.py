@@ -1,4 +1,4 @@
-"""Prepare an 8-epoch, opt-in event-concept experiment on either DDVC dataset."""
+"""Prepare shared event concepts: ActivityNet 8 epochs, YouCook2 15 by default."""
 import argparse
 import copy
 import hashlib
@@ -34,9 +34,14 @@ def stage_file(source,target):
     except OSError:shutil.copy2(source,target)
 
 
-def run_name(dataset,variant):
+def default_epochs(dataset):
+    return 8 if dataset=='anet' else 15
+
+
+def run_name(dataset,variant,epochs=None):
     suffix={'full':'event_concept','aux':'concept_aux','control':'concept_control'}[variant]
-    return f'{dataset}_full_{suffix}_e8_b1'
+    epochs=default_epochs(dataset) if epochs is None else epochs
+    return f'{dataset}_full_{suffix}_e{epochs}_b1'
 
 
 def load_helper(name):
@@ -55,12 +60,12 @@ def ensure_base(work,dataset,source_config):
     if dataset=='anet':
         print('ASSETS: official ANET feature download is about 2.52 GiB; bank uses training captions only.',flush=True)
         command=[sys.executable,'-u','tools/activitynet_pipeline.py','prepare','--work',str(work),
-                 '--mode','full','--run-name',name]
+                 '--mode','full','--run-name',name,'--data-root',str(work/'assets'/'anet')]
     else:
         print('ASSETS: official YouCook2 feature download is about 872 MiB; train-only bank.',flush=True)
         command=[sys.executable,'-u','tools/molab_pipeline.py','prepare','--mode','full',
                  '--run-name',name,'--epochs','15','--experiment','no_dedup_same_merges',
-                 '--data-root',str(work/'assets'),'--prepared-root',str(work/'prepared'),
+                 '--data-root',str(work/'assets'/'yc2'),'--prepared-root',str(work/'prepared'),
                  '--output-root',str(work/'runs'),'--log-root',str(work/'logs')]
     subprocess.run(command,cwd=ROOT,check=True)
     return target
@@ -68,7 +73,9 @@ def ensure_base(work,dataset,source_config):
 
 def prepare(args):
     work=args.work.resolve();work.mkdir(parents=True,exist_ok=True)
-    name=run_name(args.dataset,args.variant);target=work/'prepared'/name
+    epochs=getattr(args,'epochs',None) or default_epochs(args.dataset)
+    if epochs not in (8,15):raise ValueError('Concept experiment supports 8 or 15 epochs')
+    name=run_name(args.dataset,args.variant,epochs);target=work/'prepared'/name
     if (target/'config.yml').exists():check(target/'config.yml');return
     if (work/'runs'/name).exists():raise FileExistsError('Training output already exists; do not prepare over it')
     source=ensure_base(work,args.dataset,args.source_config)
@@ -111,10 +118,10 @@ def prepare(args):
     vocab_path=target/'concept_vocabulary.json';dump(vocab_path,vocab)
     cfg.update(changed_paths)
     cfg.update(id=name,exp_name=name,fixed_run_id=True,save_dir=str(work/'runs'),cfg_path='',
-               start_from='',start_from_mode='last',pretrain=None,epoch=8,min_epoch_when_save=0,
+               start_from='',start_from_mode='last',pretrain=None,epoch=epochs,min_epoch_when_save=0,
                save_checkpoint_every=1,save_all_checkpoint=False,
                only_ft_captioner=False,only_ft_class_head=False,training_scheme='all',
-               experiment_recipe='event_concept_e8_v1',event_concepts=args.variant!='control',
+               experiment_recipe='event_concept_v1',event_concepts=args.variant!='control',
                concept_condition_prefix=args.variant=='full',concept_loss_coef=.1,
                concept_hidden_dim=256,concept_embedding_dim=128,
                concept_vocab_path=str(vocab_path),concept_vocab_sha256=sha(vocab_path))
@@ -169,7 +176,8 @@ def check(path,require_features=True):
                  if k not in {'start_from','start_from_mode','current_lr'} and cfg.get(k)!=v}
     if differences:raise ValueError('Concept experiment recipe drift: '+repr(differences))
     if set(cfg)-set(expected)-{'current_lr'}:raise ValueError('Unexpected extra config keys')
-    assert cfg['epoch']==8 and cfg['batch_size']==1 and cfg['gradient_accumulation_steps']==1
+    assert cfg['epoch'] in (8,15) and cfg['id'].endswith(f"_e{cfg['epoch']}_b1")
+    assert cfg['batch_size']==1 and cfg['gradient_accumulation_steps']==1
     assert cfg['num_queries']==(10 if cfg['dataset']=='anet' else 50)
     assert cfg['precision']=='fp32' and not cfg['allow_tf32'] and cfg['seed']==777
     assert cfg['aux_loss'] and cfg['learned_proposal_mask'] and cfg['able_ret']
@@ -198,7 +206,7 @@ def check(path,require_features=True):
     for p in required:
         if not Path(p).is_file():raise FileNotFoundError(p)
     print('CONCEPT_RECIPE_OK',cfg['dataset'],len(train),'train',len(val),'validation',len(vocab['concepts']),
-          'concepts; epochs=8; variant='+manifest['variant'],flush=True)
+          f"concepts; epochs={cfg['epoch']}; variant="+manifest['variant'],flush=True)
     return cfg
 
 
@@ -209,15 +217,15 @@ def restage(args):
     work=args.work.resolve()
     if cfg['dataset']=='anet':
         helper=load_helper('activitynet_pipeline')
-        source=helper.ensure_feature_file(args.features.resolve() if args.features else work/'assets/clipvitl14.pth')
+        source=helper.ensure_feature_file(args.features.resolve() if args.features else work/'assets/anet/clipvitl14.pth')
         features=helper.load_features(source)
         ids=set(json.loads(Path(cfg['train_caption_file']).read_text()))|set(json.loads(Path(cfg['val_caption_file']).read_text()))
         if ids-set(features):raise ValueError('Downloaded features are missing restored annotation IDs')
         helper.save_features(features,ids,cfg['visual_feature_folder'][0])
     else:
         from types import SimpleNamespace
-        if args.features:stage_file(args.features,work/'assets/clipvitl14.pth')
-        load_helper('molab_pipeline').restage(SimpleNamespace(config=str(args.config),data_root=str(work/'assets')))
+        if args.features:stage_file(args.features,work/'assets/yc2/clipvitl14.pth')
+        load_helper('molab_pipeline').restage(SimpleNamespace(config=str(args.config),data_root=str(work/'assets'/'yc2')))
     check(args.config)
     print('RESTAGE_COMPLETE',flush=True)
 
@@ -247,6 +255,7 @@ def main():
     p=sub.add_parser('prepare');p.add_argument('--work',type=Path,required=True)
     p.add_argument('--dataset',choices=['anet','yc2'],required=True)
     p.add_argument('--variant',choices=['full','aux','control'],default='full');p.add_argument('--source-config',type=Path)
+    p.add_argument('--epochs',type=int,choices=[8,15],help='Default: ANET 8, YouCook2 15; separate run IDs')
     p=sub.add_parser('check');p.add_argument('--config',type=Path,required=True)
     p=sub.add_parser('reuse-runtime');p.add_argument('--work',type=Path,required=True);p.add_argument('--source-work',type=Path,required=True)
     p=sub.add_parser('restage');p.add_argument('--work',type=Path,required=True);p.add_argument('--config',type=Path,required=True);p.add_argument('--features',type=Path)

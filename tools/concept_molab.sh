@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Same event-concept module/recipe for ANET and YouCook2; full training is 8 epochs.
+# Same concept module: ActivityNet defaults to 8 epochs, YouCook2 to 15.
 set -Eeuo pipefail
 trap 'echo "FAILED at line $LINENO; inspect the command/log above." >&2' ERR
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -8,8 +8,13 @@ PY=${DDVC_PYTHON:-/tmp/uv-venv/bin/python}
 DATASET=${2:-anet}
 VARIANT=${3:-full}
 case "$DATASET" in anet|yc2) ;; *) echo 'Dataset must be anet or yc2'; exit 1;; esac
+EPOCHS=${DDVC_CONCEPT_EPOCHS:-}
+if [[ -z "$EPOCHS" ]]; then
+  if [[ "$DATASET" == anet ]]; then EPOCHS=8; else EPOCHS=15; fi
+fi
+case "$EPOCHS" in 8|15) ;; *) echo 'DDVC_CONCEPT_EPOCHS must be 8 or 15'; exit 1;; esac
 case "$VARIANT" in full) SUFFIX=event_concept;; aux) SUFFIX=concept_aux;; control) SUFFIX=concept_control;; *) echo 'Variant must be full, aux or control'; exit 1;; esac
-RUN=${DATASET}_full_${SUFFIX}_e8_b1
+RUN=${DATASET}_full_${SUFFIX}_e${EPOCHS}_b1
 CFG="$WORK/prepared/$RUN/config.yml"
 SMOKE_CFG="$WORK/prepared/$RUN/smoke/config.yml"
 MARKER="$WORK/provenance/${RUN}_smoke_ready.json"
@@ -49,13 +54,13 @@ import sys,yaml
 from pathlib import Path
 from datetime import datetime
 run,cfg=Path(sys.argv[1]),yaml.safe_load(Path(sys.argv[2]).read_text())
-assert cfg['epoch']==8 and not cfg.get('start_from') and not cfg.get('pretrain')
+assert cfg['epoch'] in (8,15) and not cfg.get('start_from') and not cfg.get('pretrain')
 assert not cfg.get('only_ft_captioner') and not cfg.get('only_ft_class_head')
 if run.exists():
     if list(run.glob('*.pth')):raise FileExistsError('Run has weights. Use resume; do not overwrite it.')
     preserved=run.with_name(run.name+'_failed_'+datetime.now().strftime('%Y%m%d_%H%M%S_%f'))
     run.rename(preserved);print('PRESERVED_FAILED_START',preserved)
-print('FRESH_CONCEPT_TRAINING epochs=8; all DDVC parameters train; no old checkpoint loaded')
+print('FRESH_CONCEPT_TRAINING epochs='+str(cfg['epoch'])+'; all DDVC parameters train; no old checkpoint loaded')
 PY
   fi
   nohup "$PY" -u train.py --cfg_path "$CFG" >> "$WORK/logs/$RUN.log" 2>&1 < /dev/null &
@@ -85,7 +90,7 @@ case ${1:-help} in
     SOURCE_ARGS=()
     if [[ -n ${4:-} ]]; then SOURCE_ARGS=(--source-config "$4"); fi
     logged "prepare_${RUN}" "$PY" -u tools/concept_pipeline.py prepare \
-      --work "$WORK" --dataset "$DATASET" --variant "$VARIANT" "${SOURCE_ARGS[@]}"
+      --work "$WORK" --dataset "$DATASET" --variant "$VARIANT" --epochs "$EPOCHS" "${SOURCE_ARGS[@]}"
     ;;
   smoke)
     test -f "$WORK/provenance/cuda_ready"; check

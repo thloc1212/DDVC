@@ -1,5 +1,9 @@
 # DDVC + event concepts — Molab, train mới 8 epochs
 
+**Cập nhật:** ActivityNet mặc định 8 epochs; YouCook2 mặc định **15 epochs** theo
+yêu cầu mới. Hướng dẫn YouCook2 đầy đủ: [YC2_CONCEPT_E15_MOLAB.md](YC2_CONCEPT_E15_MOLAB.md).
+Module/model/loss dùng chung; epoch budget khác theo dataset.
+
 Branch: https://github.com/thloc1212/DDVC/tree/exp/event-concept-caption-e8
 
 Đây là thí nghiệm mới, chưa có metric chứng minh tăng điểm. Dùng cùng module,
@@ -145,13 +149,13 @@ LC_ALL=C bash /marimo/DDVC_Concept_E8/source/tools/concept_molab.sh smoke yc2 fu
 LC_ALL=C bash /marimo/DDVC_Concept_E8/source/tools/concept_molab.sh train yc2 full
 ```
 
-YouCook2 features ~872 MiB; bank/vocabulary riêng từ train YouCook2. Run 8 epochs,
+YouCook2 features ~872 MiB; bank/vocabulary riêng từ train YouCook2. Run 15 epochs,
 50 queries, cùng module/hyperparameters concept. Nếu muốn reuse data YC2 đã có,
 thêm đường tuyệt đối config YC2 sau `prepare yc2 full`, như ví dụ ANET ở A3.
 Chạy hai dataset tuần tự để dễ theo dõi GPU/log.
 
 ```bash
-tail -n 80 -f /marimo/DDVC_Concept_E8/logs/yc2_full_event_concept_e8_b1.log
+tail -n 80 -f /marimo/DDVC_Concept_E8/logs/yc2_full_event_concept_e15_b1.log
 ```
 
 ## D. Ablation thống nhất trên cả hai dataset
@@ -168,8 +172,8 @@ LC_ALL=C bash /marimo/DDVC_Concept_E8/source/tools/concept_molab.sh smoke anet c
 LC_ALL=C bash /marimo/DDVC_Concept_E8/source/tools/concept_molab.sh train anet control
 ```
 
-Các variant có run ID/log/checkpoint riêng và đều 8 epochs. Không so best-8 của
-method mới với last-15 của baseline; báo cáo best theo cùng tiêu chí/validation.
+Các variant có run ID/log/checkpoint riêng: ANET 8, YouCook2 15 epochs mặc định.
+So sánh method/control trong cùng dataset với cùng budget; báo cáo best theo cùng tiêu chí.
 
 ## E. Google Drive backup
 

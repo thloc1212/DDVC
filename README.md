@@ -9,6 +9,10 @@ to concepts disabled. New experiment results are pending.
 
 Start here: [8-epoch Molab commands, runtime/data reuse and Drive backup](docs/EVENT_CONCEPT_E8_MOLAB.md).
 
+Updated defaults: ActivityNet 8 epochs, **YouCook2 15 epochs**, same concept model.
+[YouCook2 15-epoch Molab commands](docs/YC2_CONCEPT_E15_MOLAB.md).
+Downloads are isolated under `assets/anet` and `assets/yc2`.
+
 
 This fork's primary Molab recipe trains DDVC from scratch on full feature-matched
 YouCook2 (1,237 train / 436 validation), for 15 epochs, seed 777, batch/accumulation 1,
