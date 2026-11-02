@@ -36,6 +36,7 @@ from misc.training_state import (atomic_save, capture_rng, restore_rng, snapshot
                                  schedule_contrastive, validate_resume)
 from misc.runtime_perf import amp_context,configure_runtime,vram_metrics,append_performance
 from misc.nonfinite_diagnostics import report_nonfinite_loss
+from misc.gradient_guard import clip_gradients_or_fail
 
 # global clip_gt
 def train(opt):
@@ -246,7 +247,14 @@ def train(opt):
             window_length = min(accumulation, len(train_loader) - window_start)
             (final_loss / window_length).backward()
             if (batch_index + 1) % accumulation == 0 or batch_index + 1 == len(train_loader):
-                torch.nn.utils.clip_grad_norm_(model.parameters(), opt.grad_clip)
+                try:
+                    clip_gradients_or_fail(model, opt.grad_clip, save_folder,
+                                           epoch=epoch, batch_index=batch_index,
+                                           iteration=iteration, video_ids=dt.get('video_key'))
+                except RuntimeError:
+                    logger.exception('GRADIENT_UPDATE_ABORTED video=%s epoch=%s iteration=%s',
+                                     dt.get('video_key'), epoch, iteration)
+                    raise
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
                 optimizer_steps += 1

@@ -33,7 +33,7 @@ smoke_marker() {
 import hashlib,json,sys
 from pathlib import Path
 cfg,marker,mode=Path(sys.argv[1]),Path(sys.argv[2]),sys.argv[3]
-files=[cfg,Path('ddvc/CaptioningHead/event_concepts.py'),Path('ddvc/CaptioningHead/gpt2.py'),Path('ddvc/ddvc_ret_encdec_clip_capQ.py')]
+files=[cfg,Path('ddvc/CaptioningHead/event_concepts.py'),Path('ddvc/CaptioningHead/gpt2.py'),Path('ddvc/ddvc_ret_encdec_clip_capQ.py'),Path('train.py'),Path('misc/gradient_guard.py'),Path('transformers/caption_targets.py'),Path('ddvc/temporal_pooling.py')]
 signature={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in files}
 if mode=='save':marker.write_text(json.dumps(signature))
 elif not marker.is_file() or json.loads(marker.read_text())!=signature:
