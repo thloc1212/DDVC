@@ -13,7 +13,7 @@ mkdir -p "$WORK/logs" "$WORK/provenance"
 COMMAND=${1:?Use smoke/train/report/score/postprocess followed by a config path}
 CFG=${2:?Missing config path}
 RUN=$("$PY" -c 'import sys,yaml; print(yaml.safe_load(open(sys.argv[1]))["id"])' "$CFG")
-SIGNATURE=$(sha256sum "$CFG" | cut -d' ' -f1)
+SIGNATURE=$(sha256sum "$CFG" train.py misc/gradient_guard.py transformers/caption_targets.py ddvc/temporal_pooling.py | sha256sum | cut -d' ' -f1)
 MARKER="$WORK/provenance/ablation_${RUN}_${SIGNATURE}_smoke_ready"
 case "$COMMAND" in
   smoke)

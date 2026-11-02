@@ -7,6 +7,14 @@ Branch: `exp/v1-mask-ablation`, dựa trên `exp/activitynet-current-model` tạ
 
 Không reset/xóa nhánh concept; có thể quay lại `exp/event-concept-caption-e8` sau.
 
+### Bảo vệ NaN khi chạy ActivityNet
+
+Nhánh giữ nguyên hai sửa lỗi dữ liệu đã có: pooling đoạn GT bị lượng tử hóa thành rỗng dùng frame hợp lệ gần nhất; caption target bị quy tắc prefix xóa hết được khôi phục từ target gốc. Mẫu thực sự toàn padding bị báo lỗi, không được đổi loss thành 0. Cả supervised caption loss và caption matching dùng chung quy tắc target.
+
+Training dừng trước update khi loss không hữu hạn và ghi `nonfinite_diagnostics.json`. Ngoài ra, trước mỗi optimizer update, gradient clipping dùng `error_if_nonfinite=True`: nếu gradient NaN/Inf hoặc tổng norm overflow, ghi `nonfinite_gradients.json`, log `GRADIENT_UPDATE_ABORTED` và dừng trước `optimizer.step()`. Không tự skip video, clamp loss, nan_to_num, thay LR hoặc đổi trọng số loss. Clipping của gradient hữu hạn giữ nguyên như trước. Chốt chặn này áp dụng đồng nhất cho mọi dataset và M0–M3.
+
+Setup ActivityNet chạy regression cho pooling, caption target và gradient guard. Kiểm tra CPU độc lập: `python smoke_test_gradient_guard.py`, `python smoke_test_temporal_pooling.py`, `python smoke_test_caption_targets.py --gpt2`. CPU test không thay thế GPU model smoke. Sau khi cập nhật source, chạy lại `v1_ablation.sh smoke` cho config định train; smoke marker tính cả source bảo vệ NaN nên marker cũ không được dùng nhầm.
+
 ## 1. Thiết kế thí nghiệm
 
 Giữ nguyên dữ liệu, train-only retrieval bank, seed 777, decoder GPT-2 khởi tạo từ đầu, LR, scheduler, batch 1, accumulation 1, FP32, caption chunk 16 và số epoch giữa các run. CLIP features trích xuất sẵn. Dùng 15 epoch cho cả hai dataset trong bảng ablation này; YouCook2 50 queries, ActivityNet 10 queries theo cấu hình bản 1.
