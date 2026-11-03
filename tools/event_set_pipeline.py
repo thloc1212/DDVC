@@ -1,14 +1,20 @@
 """Fresh V1 attention-counter / learned duplicate-selection configurations."""
 import argparse
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import subprocess
 import sys
 import yaml
-from molab_pipeline import revision
 
 ROOT=Path(__file__).resolve().parents[1]
+# Molab may enable Python safe-path mode, which omits the script directory.
+# Resolve this sibling by filename rather than relying on sys.path/PYTHONPATH.
+_helper_spec=importlib.util.spec_from_file_location('ddvc_event_set_molab_helper', ROOT/'tools'/'molab_pipeline.py')
+_helper=importlib.util.module_from_spec(_helper_spec)
+_helper_spec.loader.exec_module(_helper)
+revision=_helper.revision
 
 
 def main():

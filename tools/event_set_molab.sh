@@ -25,6 +25,13 @@ export PATH="$WORK/tools/java/bin:$PATH"
 if [[ -f "$WORK/cuda130_env.sh" ]]; then source "$WORK/cuda130_env.sh"; fi
 mkdir -p "$WORK/logs" "$WORK/provenance"
 cd "$REPO"
+verify_setup() {
+   "$PY" smoke_test_runtime_perf.py --cuda
+   "$PY" smoke_test_event_set_heads.py
+   touch "$WORK/provenance/cuda_ready"
+   uv pip freeze --python "$PY" > "$WORK/provenance/resolved_packages.txt"
+   "$PY" tools/molab_pipeline.py env > "$WORK/provenance/runtime.json"
+}
 case "$COMMAND" in
  setup)
    "$PY" -c 'import json,torch,torchvision; from pathlib import Path; assert torch.cuda.is_available(); Path("../provenance/native_torch_before.json").write_text(json.dumps([torch.__version__,torchvision.__version__]))'
@@ -39,11 +46,10 @@ case "$COMMAND" in
    fi
    rm -f "$WORK/provenance/cuda_ready"
    "$PY" -u tools/molab_pipeline.py build-cuda --jobs 1 2>&1 | tee "$WORK/logs/build_cuda.log"
-   "$PY" smoke_test_runtime_perf.py --cuda
-   "$PY" smoke_test_event_set_heads.py
-   touch "$WORK/provenance/cuda_ready"
-   uv pip freeze --python "$PY" > "$WORK/provenance/resolved_packages.txt"
-   "$PY" tools/molab_pipeline.py env > "$WORK/provenance/runtime.json"
+   verify_setup
+   ;;
+ verify-setup)
+   verify_setup
    ;;
  prepare)
    if [[ -f "$CFG" ]]; then echo "Existing config retained: $CFG"; exit 0; fi
@@ -86,5 +92,5 @@ PY
      echo "STARTED PID=$! LOG=$WORK/logs/$RUN.log"
    fi
    ;;
- *) echo 'Usage: event_set_molab.sh setup|prepare|smoke|train|resume|report yc2|anet control|counter|duplicate|both smoke|subset|full'; exit 2;;
+ *) echo 'Usage: event_set_molab.sh setup|verify-setup|prepare|smoke|train|resume|report yc2|anet control|counter|duplicate|both smoke|subset|full'; exit 2;;
 esac

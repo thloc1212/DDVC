@@ -62,6 +62,9 @@ LC_ALL=C LANG=C bash /marimo/DDVC_Event_Set/source/tools/event_set_molab.sh setu
 
 Setup uses Molab's native Python/Torch and the existing CUDA13 compatibility path;
 no root or new virtual environment. It logs package/toolchain/build checks.
+If CUDA compilation succeeded but a later setup test failed, pull the fix and run
+`event_set_molab.sh verify-setup` to repeat CUDA/CPU validation without reinstalling
+packages or rebuilding. The ready marker is written only after both tests pass.
 Preparation auto-downloads features (YC2~872MiB; ANET~2.52GiB) and annotations,
 then builds a train-only text bank. Drive download quota may require reusing your
 previous feature file. Put features in the correct dataset cache:

@@ -82,7 +82,7 @@ def main():
                       lr=5e-5,seed=777,batch_size=1,num_queries=50,precision='fp32',proposal_mask_loss_coef=1.,
                       start_from='old_run',pretrain='old_weights')
         source_config=work/'base.yml';source_config.write_text(yaml.safe_dump(original))
-        subprocess.run([sys.executable,'tools/event_set_pipeline.py','--work',str(work),
+        subprocess.run([sys.executable,'-P','tools/event_set_pipeline.py','--work',str(work),
                         '--dataset','yc2','--variant','both','--source-config',str(source_config)],check=True)
         config=yaml.safe_load((work/'prepared/yc2_full_event_set_both_e15_b1/config.yml').read_text())
         for key in ['lr','seed','batch_size','num_queries','precision','proposal_mask_loss_coef','train_caption_file']:
