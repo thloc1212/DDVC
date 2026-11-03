@@ -155,6 +155,12 @@ def smoke(args):
             output,loss=model(dt,criterion,contrastive,opt.transformer_input_type,bank)
             total=sum(v.float()*criterion.weight_dict[k] for k,v in loss.items() if k in criterion.weight_dict)
         if not torch.isfinite(total):raise RuntimeError('Non-finite smoke loss')
+        if getattr(opt, 'attention_counter', False):
+            assert 'loss_count_ordinal' in loss and model.attention_counter is not None
+        if getattr(opt, 'duplicate_head', False):
+            assert 'loss_duplicate_pair' in loss and 'duplicate_logits' in output
+            print('DUPLICATE_SUPERVISION', {k:float(loss[k].detach()) for k in
+                  ('duplicate_positive_pairs','duplicate_negative_pairs','loss_duplicate_pair')}, flush=True)
         total.backward()
         if any(not torch.isfinite(p.grad).all() for p in model.parameters() if p.grad is not None):
             raise RuntimeError('Non-finite smoke gradients')
@@ -166,7 +172,9 @@ def smoke(args):
     with torch.no_grad(),amp_context(opt):
         output,loss=model(dt,criterion,contrastive,opt.transformer_input_type,bank,eval_mode=True)
     loader=DataLoader(ds,batch_size=1,num_workers=0,collate_fn=collate_fn)
-    postprocessors['bbox'](output,dt['video_length'][:,1],loader,model,None)
+    postprocessed = postprocessors['bbox'](output,dt['video_length'][:,1],loader,model,None)
+    if getattr(opt, 'duplicate_head', False):
+        assert 'duplicate_probabilities' in postprocessed[0]
     postprocessors['bbox'].forward_grounding(output,dt['video_length'][:,1],dt['video_target'])
     report=dict(precision=opt.precision,benchmark_steps=args.benchmark_steps,
                 mean_forward_backward_seconds=sum(timings)/len(timings),

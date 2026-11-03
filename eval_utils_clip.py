@@ -141,6 +141,7 @@ def reranking(p_src, alpha, cl_score_weight, temperature, fix_topN=-1, increase_
               merge_consecutive=False, consecutive_gap=2., consecutive_max_span=60., consecutive_max_events=3):
     print('SELECTION method={} sigma={} overlap_merge={} consecutive_merge={} gap_s={} max_span_s={} max_events={} alpha={} temp={}'.format(method,sigma,merge,merge_consecutive,consecutive_gap,consecutive_max_span,consecutive_max_events,alpha,temperature))
     with open(p_src) as stream:d=json.load(stream)
+    learned_selection=any(row.get('duplicate_selection',False) for rows in d['results'].values() for row in rows)
     for key,rows in d['results'].items():
         if not rows:continue
         top_n=rows[0]['pred_event_count'] if fix_topN<0 else fix_topN
@@ -149,6 +150,8 @@ def reranking(p_src, alpha, cl_score_weight, temperature, fix_topN=-1, increase_
         d['results'][key]=select_proposals(rows,int(top_n+extra),method,sigma,alpha,temperature,
                                           merge,merge_iou,merge_text,merge_consecutive,consecutive_gap,consecutive_max_span,consecutive_max_events)
     d['selection']={'method':method,'sigma':sigma,'merge':merge,'merge_iou':merge_iou,'merge_text_similarity':merge_text,
+                    'effective_policy':'learned_same_event_keep_best' if learned_selection else 'legacy',
+                    'legacy_merges_applied':bool(not learned_selection and (merge or merge_consecutive)),
                     'merge_consecutive':merge_consecutive,'consecutive_gap':consecutive_gap,
                     'consecutive_max_span':consecutive_max_span,'consecutive_max_events':consecutive_max_events}
     suffix='' if method=='topk' and not merge else '_{}_sigma{}_merge{}'.format(method,sigma,int(merge))
@@ -229,6 +232,10 @@ def evaluate(model,memory_bank,criterion,contrastive_criterion, postprocessors, 
                         'query_id': results[idx]['query_id'][pid].item(),
                         'vid_duration': results[idx]['vid_duration'].item(),
                         'pred_event_count': results[idx]['pred_seq_len'].item(),
+                        **({'duplicate_probabilities': results[idx]['duplicate_probabilities'][int(results[idx]['query_id'][pid])],
+                            'duplicate_selection': getattr(opt, 'duplicate_selection', False),
+                            'duplicate_merge_threshold': getattr(opt, 'duplicate_merge_threshold', .9)}
+                           if 'duplicate_probabilities' in results[idx] else {}),
                     }
                     for pid in range(segment_num) if results[idx]['scores'][pid].item() > score_threshold and raw_boxes_mask[pid]]
                 if results_g:

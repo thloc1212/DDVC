@@ -21,6 +21,7 @@ from misc.detr_utils.misc import (inverse_sigmoid)
 
 from .matcher import build_matcher_cl
 from .temporal_pooling import pool_temporal_segments
+from .event_set_heads import AttentionCounter, DuplicateHead, duplicate_objective, ordinal_cdf_loss
 from transformers.caption_targets import prepare_legacy_caption_targets
 
 from .deformable_transformer import build_deforamble_transformer
@@ -235,6 +236,11 @@ class CM2(nn.Module):
         self.translator = translator
 
         self.disable_mid_caption_heads = opt.disable_mid_caption_heads
+        # Preserve V1 initialization/RNG when adding optional experiment heads.
+        with torch.random.fork_rng(devices=[]):
+            torch.random.default_generator.manual_seed(1733)
+            self.attention_counter = AttentionCounter(hidden_dim, max_count=opt.max_eseq_length) if getattr(opt, 'attention_counter', False) else None
+            self.duplicate_head = DuplicateHead(hidden_dim) if getattr(opt, 'duplicate_head', False) else None
         if self.disable_mid_caption_heads:
             print('only calculate caption loss in the last decoding layer')
 
@@ -698,9 +704,32 @@ class CM2(nn.Module):
                 context = mask_layer_context(others, out['pred_logits'], last_reference, out['pred_boxes'])
                 loss.update(self.caption_head[-1].proposal_mask.objective(
                     out['pred_boxes'][0], dt['video_mask'], proposal_confidence(context), proposal_anchors(context)))
+            self.event_set_prediction(out, loss, hs, dt, criterion)
             return out, loss
         else:
             return memory
+
+    def event_set_prediction(self, out, loss, hs, dt, criterion):
+        if self.attention_counter is not None:
+            from .criterion import cross_entropy_with_gaussian_mask
+            layers = list(out.get('aux_outputs', [])) + [out]
+            for layer_id, layer in enumerate(layers):
+                feature_id = layer_id if len(layers) > 1 else hs.shape[0]-1
+                logits = self.attention_counter(hs[feature_id], layer['pred_boxes'], layer['pred_logits'])
+                layer['pred_count'] = logits
+                counts = torch.tensor([len(t['boxes']) for t in dt['video_target']], device=logits.device).clamp(max=logits.shape[-1]-1)
+                target = F.one_hot(counts, logits.shape[-1]).to(logits)
+                suffix = '' if layer is out else '_{}'.format(layer_id)
+                loss['loss_counter'+suffix] = cross_entropy_with_gaussian_mask(
+                    logits, target, self.opt, criterion.counter_class_rate[:logits.shape[-1]].to(logits.device))
+                loss['counter_count_error'+suffix] = (logits.argmax(-1)-counts).abs().float().mean().detach()
+            loss['loss_count_ordinal'] = ordinal_cdf_loss(out['pred_count'], counts)
+            loss['counter_expected_count'] = (out['pred_count'].softmax(-1) * torch.arange(out['pred_count'].shape[-1], device=counts.device)).sum(-1).mean().detach()
+        if self.duplicate_head is not None:
+            logits = self.duplicate_head(hs[-1], out['pred_boxes'], out['pred_logits'])
+            out['duplicate_logits'] = logits
+            loss.update(duplicate_objective(logits, out['pred_boxes'], dt['video_target'],
+                        getattr(self.opt, 'duplicate_assign_iou', .5), getattr(self.opt, 'duplicate_assign_margin', .1)))
     def predict_event_num(self, counter, hs_lid):
         hs_lid_pool = torch.max(hs_lid, dim=1, keepdim=False)[0]  # [bs, feat_dim]
         outputs_class0 = counter(hs_lid_pool)
@@ -1478,6 +1507,9 @@ class PostProcess(nn.Module):
             {'scores': s, 'labels': l, 'boxes': b, 'raw_boxes': b, 'captions': c, 'caption_scores': cs, 'cl_scores': cls,'query_id': qid,
              'vid_duration': ts, 'pred_seq_len': sl, 'raw_idx': idx} for s, l, b, rb, c, cs, cls, qid, ts, sl, idx in
             zip(scores, labels, boxes, raw_boxes, caps, cap_scores, cl_scores, topk_boxes, target_sizes, eseq_lens, topk_indexes)]
+        if 'duplicate_logits' in outputs:
+            for batch, result in enumerate(results):
+                result['duplicate_probabilities'] = outputs['duplicate_logits'][batch].sigmoid().detach().cpu().tolist()
         return results
 
 class PositionalEncoding(nn.Module):
@@ -1556,6 +1588,10 @@ def build(args):
         weight_dict['loss_proposal_mask'] = args.proposal_mask_loss_coef
     if getattr(args, 'dedup_loss_coef', 0.) > 0:
         weight_dict['loss_dedup'] = args.dedup_loss_coef
+    if getattr(args, 'attention_counter', False):
+        weight_dict['loss_count_ordinal'] = args.count_ordinal_coef
+    if getattr(args, 'duplicate_head', False):
+        weight_dict['loss_duplicate_pair'] = args.duplicate_pair_coef
     losses = ['labels', 'boxes', 'cardinality']
 
     criterion = SetCriterion_cl(args.num_classes, matcher, weight_dict, losses, focal_alpha=args.focal_alpha,

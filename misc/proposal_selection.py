@@ -102,6 +102,8 @@ def select_proposals(rows, top_n, method='topk', sigma=.5, alpha=1., temperature
             raise ValueError('Invalid predicted temporal interval')
         row['joint_score']=joint_score(row,alpha,temperature)
         if not math.isfinite(row['joint_score']):raise ValueError('Non-finite joint score')
+    if pending and pending[0].get('duplicate_selection', False):
+        return learned_duplicate_selection(pending, top_n, sigma if method == 'softnms' else None)
     if merge:pending=merge_proposals(pending,merge_iou,merge_text)
     if method=='topk':
         chosen=sorted(pending,key=lambda p:p['joint_score'],reverse=True)[:int(top_n)]
@@ -120,3 +122,50 @@ def select_proposals(rows, top_n, method='topk', sigma=.5, alpha=1., temperature
     if merge_consecutive:
         chosen=merge_consecutive_proposals(chosen,consecutive_gap,consecutive_max_span,consecutive_max_events)
     return chosen
+
+
+def learned_duplicate_selection(rows, top_n, sigma=.5):
+    """Keep the best representative; never union nested/consecutive intervals.
+
+    All pairs within a duplicate group must agree. Uncertain/low-IoU pairs
+    remain separate. Same-GT relation replaces temporal-only suppression.
+    """
+    def probability(a, b):
+        qa, qb = int(a['query_id']), int(b['query_id'])
+        pa, pb = a['duplicate_probabilities'], b['duplicate_probabilities']
+        p = .5 * (float(pa[qb]) + float(pb[qa]))
+        if not math.isfinite(p) or not 0 <= p <= 1:
+            raise ValueError('Invalid duplicate probability')
+        return p
+
+    groups = []
+    for row in sorted(rows, key=lambda r:r['joint_score'], reverse=True):
+        group = next((g for g in groups if all(
+            temporal_iou(row['timestamp'], other['timestamp']) >= .5 and
+            probability(row, other) >= float(row.get('duplicate_merge_threshold', .9)) for other in g)), None)
+        if group is None:
+            groups.append([row])
+        else:
+            group.append(row)
+    pending = []
+    for group in groups:
+        representative = copy.deepcopy(group[0])
+        representative['merged_query_ids'] = [p['query_id'] for p in group]
+        representative['merge_size'] = len(group)
+        representative['merge_policy'] = 'learned_same_event_keep_best'
+        pending.append((representative, representative['joint_score']))
+    chosen = []
+    while pending and len(chosen) < int(top_n):
+        index = max(range(len(pending)), key=lambda i:pending[i][1])
+        row, score = pending.pop(index)
+        row['selection_score'] = score
+        chosen.append(row)
+        updated = []
+        for candidate, value in pending:
+            iou = temporal_iou(row['timestamp'], candidate['timestamp'])
+            # Below .5 duplicate probability, do not penalize valid overlap.
+            strength = max(0., 2 * probability(row, candidate)-1.)
+            factor = math.exp(-strength * iou**2 / sigma) if sigma is not None else 1.
+            updated.append((candidate, value*factor if value > 0 else value-abs(value)*(1-factor)))
+        pending = updated
+    return sorted(chosen, key=lambda r:r['timestamp'])

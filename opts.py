@@ -406,6 +406,14 @@ def parse_opts(argv=None, write_options=True):
     
 
     # reranking
+    parser.add_argument('--attention_counter', action='store_true')
+    parser.add_argument('--duplicate_head', action='store_true')
+    parser.add_argument('--count_ordinal_coef', type=float, default=0.2)
+    parser.add_argument('--duplicate_pair_coef', type=float, default=0.1)
+    parser.add_argument('--duplicate_assign_iou', type=float, default=0.5)
+    parser.add_argument('--duplicate_assign_margin', type=float, default=0.1)
+    parser.add_argument('--duplicate_selection', action='store_true')
+    parser.add_argument('--duplicate_merge_threshold', type=float, default=0.9)
     args = parser.parse_args(argv)
 
     if args.cfg_path:
