@@ -156,13 +156,6 @@ def smoke(args):
             total=sum(v.float()*criterion.weight_dict[k] for k,v in loss.items() if k in criterion.weight_dict)
         if not torch.isfinite(total):raise RuntimeError('Non-finite smoke loss')
         total.backward()
-        if getattr(opt,'event_concepts',False):
-            gradients=[p.grad for name,p in model.named_parameters()
-                       if '.event_concepts.classifier.' in name and p.grad is not None]
-            if 'loss_event_concept' not in loss or not gradients or not any(g.abs().sum()>0 for g in gradients):
-                raise RuntimeError('Concept supervision did not reach its classifier')
-            print('CONCEPT_GRADIENT_PASS',float(loss['loss_event_concept'].detach()),
-                  'coverage',float(loss['concept_target_coverage']),flush=True)
         if any(not torch.isfinite(p.grad).all() for p in model.parameters() if p.grad is not None):
             raise RuntimeError('Non-finite smoke gradients')
         torch.cuda.synchronize();elapsed=time.perf_counter()-started
@@ -218,16 +211,8 @@ def resolve_profile(args):
 
 
 def experiment_options(experiment):
-    if experiment not in ('baseline','softnms','dedup_softnms','dedup_softnms_merge','dedup_softnms_merge_consecutive','no_dedup_same_merges'):
-        raise ValueError('Unknown selection experiment')
-    return dict(selection_experiment=experiment,
-                dedup_loss_coef=.1 if experiment.startswith('dedup_') else 0.,
-                dedup_start_epoch=1,dedup_iou_threshold=.5,dedup_confidence_threshold=.2,
-                eval_selection_method='topk' if experiment=='baseline' else 'softnms',
-                eval_softnms_sigma=.5,eval_merge_duplicates=experiment in ('dedup_softnms_merge','dedup_softnms_merge_consecutive','no_dedup_same_merges'),
-                eval_merge_iou=.7,eval_merge_text_similarity=.9,
-                eval_merge_consecutive=experiment.endswith('_consecutive') or experiment=='no_dedup_same_merges',
-                eval_consecutive_gap=2.,eval_consecutive_max_span=60.,eval_consecutive_max_events=3)
+    if experiment!='c2':raise ValueError('This branch supports only the finalized C2 method')
+    return dict(selection_experiment='softnms',eval_selection_method='softnms',eval_softnms_sigma=.5)
 
 
 def prepare(args):
@@ -439,7 +424,7 @@ def prepare(args):
     import yaml
     opts=json.loads((REPO/'opts.json').read_text())
     opts['experiment_recipe']='kaggle_cvpr2018_mask'
-    experiment=getattr(args,'experiment','baseline')
+    experiment=getattr(args,'experiment','c2')
     opts.update(experiment_options(experiment))
     opts.update({'lr':5e-5,'optimizer_type':'adam','weight_decay':1e-4,
                  'learning_rate_decay_start':8,'learning_rate_decay_every':3,'learning_rate_decay_rate':0.5})
@@ -528,7 +513,7 @@ def main():
     p.add_argument('--data-root',required=True);p.add_argument('--prepared-root',required=True)
     p.add_argument('--output-root',required=True);p.add_argument('--log-root',required=True)
     p.add_argument('--run-name',required=True);p.add_argument('--mode',choices=['smoke','subset','full'],default='full')
-    p.add_argument('--experiment',choices=['baseline','softnms','dedup_softnms','dedup_softnms_merge','dedup_softnms_merge_consecutive','no_dedup_same_merges'],default='no_dedup_same_merges')
+    p.add_argument('--experiment',choices=['c2'],default='c2')
     p.add_argument('--epochs',type=int,default=15);p.add_argument('--accumulation',type=int,default=None)
     p.add_argument('--hardware-profile',choices=['legacy-cvpr2018'],default='legacy-cvpr2018')
     p.add_argument('--precision',choices=['fp32','bf16'],default=None)
@@ -537,7 +522,7 @@ def main():
     p.add_argument('--allow-tf32',action=argparse.BooleanOptionalAction,default=None)
     p.add_argument('--pin-memory',action=argparse.BooleanOptionalAction,default=None)
     p.add_argument('--seed',type=int,default=777);p.add_argument('--log-every',type=int,default=10)
-    p.add_argument('--mask-mode',choices=['global','hard_local','learned_gated'],default='learned_gated')
+    p.add_argument('--mask-mode',choices=['learned_gated'],default='learned_gated')
     p.add_argument('--mask-loss',type=float,default=1.0)
     for name in ['smoke','resume-config','report']:
         p=sub.add_parser(name);p.add_argument('--config',required=True)

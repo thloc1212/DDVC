@@ -40,8 +40,8 @@ def main():
         signature=hashlib.sha256(b''.join(p.read_bytes() for p in [caption/'train.json',caption/'val.json',data/'vocabulary_activitynet.json'])).hexdigest()
         cfg=adapter.make_config(root,'run',root/'runs','full',len(vocab['word_to_ix']),signature)
         adapter.validate_config(cfg)
-        for k,v in dict(num_queries=10,learned_proposal_mask=True,dedup_loss_coef=0.,
-            eval_merge_consecutive=True,eval_merge_duplicates=True,epoch=15,lr=5e-5,
+        for k,v in dict(num_queries=10,learned_proposal_mask=True,proposal_mask_loss_coef=1.,
+            eval_selection_method='softnms',eval_softnms_sigma=.5,epoch=15,lr=5e-5,
             gradient_accumulation_steps=1,precision='fp32',feature_dim=768,able_ret=True).items():assert cfg[k]==v,(k,cfg[k])
         for key,value in [('num_queries',50),('dedup_loss_coef',.1),('learned_proposal_mask',False),('lr',1e-4)]:
             broken=dict(cfg);broken[key]=value

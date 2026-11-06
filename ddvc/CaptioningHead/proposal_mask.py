@@ -13,6 +13,13 @@ from torch import nn
 from torch.nn import functional as F
 
 
+def query_event_boxes(boxes, query_ids):
+    """Align predicted intervals with matched or all-pair query IDs."""
+    if boxes is None or boxes.ndim != 3 or boxes.shape[0] != 1 or boxes.shape[-1] != 2:
+        raise ValueError('Captioning requires predicted boxes [1, queries, 2]; batch_size=1')
+    return boxes[0].index_select(0, query_ids.to(device=boxes.device, dtype=torch.long))
+
+
 def proposal_confidence(others, query_ids=None):
     logits = others.get('mask_event_logits')
     if logits is None:

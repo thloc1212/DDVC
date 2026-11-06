@@ -1,4 +1,12 @@
-# DDVC + learned, confidence-gated proposal masks
+# DDVC C2 + learned, confidence-gated proposal masks
+
+## Finalized C2 branch
+
+Branch: [`final/c2-learned-mask`](https://github.com/thloc1212/DDVC/tree/final/c2-learned-mask).
+The auxiliary mask BCE coefficient is **1.0**. Concept modules, dedup loss,
+merge and hard-local/global caption-context switches are removed from this
+branch. Output selection uses counter-guided Gaussian Soft-NMS sigma 0.5 only.
+See [the C2 Molab runbook](docs/C2_FINAL_MOLAB.md) for dataset-specific commands.
 
 ## Source and scope
 
@@ -54,19 +62,13 @@ These are deliberate adaptations, not an exact reproduction of the CVPR 2018 arc
 
 The confidence gate is the existing event confidence, not a new independently learned gate MLP. Improved CIDEr, boundary accuracy or robustness are hypotheses to test.
 
-## Kaggle experiment
+## Current execution
 
-Notebook: `notebooks/DDVC_Kaggle_YouCook2_Learned_Proposal_Mask.ipynb`.
-
-- Default: `MASK_MODE='learned_gated'`, subset 30% train/validation, 15 epochs, seed 777, one T4, batch 1, 50 queries.
-- Downloads the same annotations/features and builds retrieval memory from selected training captions only.
-- `MASK_MODE='global'`: same-branch baseline with the mask module disabled.
-- `MASK_MODE='hard_local'`: existing hard visual-attention mask control, with the old 10% context and minimum 4 frames. This control differs in both mask learning and masking placement/context; it is not a pure ablation of just the gate.
-- Keep the same data IDs, settings and source for comparisons. The old R12 result is a separate historical run.
-- Full mode also uses **15 epochs** by default here; override explicitly if needed. Smoke is 1%, 2 epochs.
-- A source/run manifest, actual references/config, logs and final/raw predictions are bundled in a result ZIP. Model checkpoints are left in the run directory, not the small analysis ZIP.
-- Resume with the exact run folder ID and matching mode/config. Save Kaggle output/download weights before the temporary session expires. Optimizer checkpoint migration from another branch is not supported.
-- CPU preflight runs before training. A real CUDA training/validation run is still needed to assess T4 VRAM and metrics.
+Use [C2 Molab instructions](docs/C2_FINAL_MOLAB.md). The historical Kaggle
+notebook and global/hard-local experiment switches remain on old branches;
+they are not the entry point for finalized C2. The shared run recipe is full
+feature-matched data, FP32, seed 777, batch/accumulation 1, YouCook2 15 epochs
+and ActivityNet 8 epochs. GPU smoke is required before full training.
 
 ## Code map
 

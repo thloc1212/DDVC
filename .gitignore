@@ -1,1 +1,14 @@
-git commit -m
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.so
+*.pyd
+*.o
+ddvc/ops/build/
+.venv/
+*.pth
+*.pt
+*.log
+runs/
+prepared/
+assets/

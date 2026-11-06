@@ -10,6 +10,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from transformers import GPT2Config, GPT2LMHeadModel
+from transformers.caption_targets import prepare_legacy_caption_targets
+from ddvc.temporal_pooling import pool_temporal_segments
 
 
 def main():
@@ -24,7 +26,7 @@ def main():
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return module
-    pm, local = read('proposal_mask'), read('local_visual')
+    pm = read('proposal_mask')
     Head = read('gpt2').GPT2CaptionModel
     head = Head.__new__(Head)
     nn.Module.__init__(head)
@@ -96,9 +98,11 @@ def main():
     def inverse_sigmoid(x):
         x=x.clamp(1e-5,1-1e-5);return (x/(1-x)).log()
     namespace=dict(torch=torch,nn=nn,F=F,inverse_sigmoid=inverse_sigmoid,
-        CrossEntropyLoss=nn.CrossEntropyLoss,query_event_boxes=local.query_event_boxes,
+        CrossEntropyLoss=nn.CrossEntropyLoss,query_event_boxes=pm.query_event_boxes,
         proposal_confidence=pm.proposal_confidence,proposal_anchors=pm.proposal_anchors,
         mask_layer_context=pm.mask_layer_context)
+    namespace.update(prepare_legacy_caption_targets=prepare_legacy_caption_targets,
+                     pool_temporal_segments=pool_temporal_segments)
     for name in ['event_query_cl','contrastive_loss_cosine_single_direction']:
         function=next(x for x in tree.body if isinstance(x,ast.FunctionDef) and x.name==name)
         exec(compile(ast.Module(body=[function],type_ignores=[]),str(model_path),'exec'),namespace)

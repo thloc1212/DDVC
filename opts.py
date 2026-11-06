@@ -135,7 +135,7 @@ def parse_opts(argv=None, write_options=True):
     parser.add_argument('--layer_norm_eps', type=float, default=1e-12)
     parser.add_argument('--caption_cost_type', type=str, default='loss')
     parser.add_argument('--caption_cost_chunk_size', type=int, default=16)
-    parser.add_argument('--learned_proposal_mask', action='store_true', default=False)
+    parser.add_argument('--learned_proposal_mask', action='store_true', default=True)
     parser.add_argument('--proposal_mask_bins', type=int, default=64)
     parser.add_argument('--proposal_mask_encoding_dim', type=int, default=128)
     parser.add_argument('--proposal_mask_loss_coef', type=float, default=1.0)
@@ -157,12 +157,6 @@ def parse_opts(argv=None, write_options=True):
     parser.add_argument('--precision', choices=['fp32','bf16'], default='fp32')
     parser.add_argument('--allow_tf32', action='store_true', default=False)
     parser.add_argument('--pin_memory', action='store_true', default=False)
-    parser.add_argument('--local_visual_attention', action='store_true', default=False,
-                        help='Caption each event using its predicted temporal interval')
-    parser.add_argument('--local_visual_context_ratio', type=float, default=0.1,
-                        help='Extra context on each side as a fraction of predicted duration')
-    parser.add_argument('--local_visual_min_frames', type=int, default=4,
-                        help='Minimum nearest valid frames exposed to each caption query')
     parser.add_argument('--set_cost_caption', type=float, default=0)
     parser.add_argument('--set_cost_class', type=float, default=1)
     parser.add_argument('--set_cost_bbox', type=float, default=5)
@@ -365,19 +359,8 @@ def parse_opts(argv=None, write_options=True):
     parser.add_argument('--crop_num', type=int, default=2)
 
     # reranking
-    parser.add_argument('--dedup_loss_coef', type=float, default=0.)
-    parser.add_argument('--dedup_start_epoch', type=int, default=1)
-    parser.add_argument('--dedup_iou_threshold', type=float, default=.5)
-    parser.add_argument('--dedup_confidence_threshold', type=float, default=.2)
-    parser.add_argument('--eval_selection_method', choices=['topk','softnms'], default='topk')
+    parser.add_argument('--eval_selection_method', choices=['softnms'], default='softnms')
     parser.add_argument('--eval_softnms_sigma', type=float, default=.5)
-    parser.add_argument('--eval_merge_duplicates', action='store_true', default=False)
-    parser.add_argument('--eval_merge_iou', type=float, default=.7)
-    parser.add_argument('--eval_merge_text_similarity', type=float, default=.9)
-    parser.add_argument('--eval_merge_consecutive', action='store_true', default=False)
-    parser.add_argument('--eval_consecutive_gap', type=float, default=2.)
-    parser.add_argument('--eval_consecutive_max_span', type=float, default=60.)
-    parser.add_argument('--eval_consecutive_max_events', type=int, default=3)
     parser.add_argument('--ec_alpha', type=float, default=0.3)
 
     # GPT2 decode
@@ -405,14 +388,6 @@ def parse_opts(argv=None, write_options=True):
     parser.add_argument('--contrastive_loss_coef', type=float, default=0.50)
     
 
-    # Optional event-concept experiment; disabled for every existing recipe.
-    parser.add_argument('--event_concepts', action='store_true', default=False)
-    parser.add_argument('--concept_condition_prefix', action='store_true', default=False)
-    parser.add_argument('--concept_vocab_path', type=str, default='')
-    parser.add_argument('--concept_vocab_sha256', type=str, default='')
-    parser.add_argument('--concept_loss_coef', type=float, default=.1)
-    parser.add_argument('--concept_hidden_dim', type=int, default=256)
-    parser.add_argument('--concept_embedding_dim', type=int, default=128)
 
     # reranking
     args = parser.parse_args(argv)

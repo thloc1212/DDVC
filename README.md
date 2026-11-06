@@ -1,29 +1,23 @@
-# DDVC experiments — default: no-dedup learned proposal mask
+# DDVC — final C2
 
-## This branch: event-concept experiment, 8 epochs
+Branch: [`final/c2-learned-mask`](https://github.com/thloc1212/DDVC/tree/final/c2-learned-mask).
 
-`exp/event-concept-caption-e8` adds train-only event word-concept supervision and
-predicted-concept GPT-2 prefix conditioning. The module is shared by ActivityNet
-and YouCook2; the decoder remains randomly initialized. Existing flags default
-to concepts disabled. New experiment results are pending.
+Finalized method: DDVC + confidence-gated learned proposal mask + auxiliary
+mask BCE (weight **1.0**), followed by counter-guided Gaussian **Soft-NMS (sigma 0.5)**.
+Concept heads/loss/prefix (C3–C5), deduplication loss and merge are removed.
+The previous ablation implementation remains on
+[`exp/v1-v2-contribution-ablation`](https://github.com/thloc1212/DDVC/tree/exp/v1-v2-contribution-ablation).
+This is an experimental fork; the original project attribution is preserved below.
 
-Start here: [8-epoch Molab commands, runtime/data reuse and Drive backup](docs/EVENT_CONCEPT_E8_MOLAB.md).
+- YouCook2: full feature-matched 1237 train / 436 val, **15 epochs, 50 queries**.
+- ActivityNet Captions: 10009 train / 4917 val, **8 epochs, 10 queries**.
+- Both: seed 777, batch 1, accumulation 1, FP32, TF32 off, Adam LR 5e-5.
+- GPT-2 is randomly initialized; pre-extracted CLIP features remain frozen.
+- C2 active-path model math and initialization are retained. No new scores are claimed.
 
-Updated defaults: ActivityNet 8 epochs, **YouCook2 15 epochs**, same concept model.
-[YouCook2 15-epoch Molab commands](docs/YC2_CONCEPT_E15_MOLAB.md).
-Downloads are isolated under `assets/anet` and `assets/yc2`.
-
-
-This fork's primary Molab recipe trains DDVC from scratch on full feature-matched
-YouCook2 (1,237 train / 436 validation), for 15 epochs, seed 777, batch/accumulation 1,
-FP32, LR 5e-5. The learned CVPR-2018-inspired proposal mask is retained. Dedup loss
-is **off**; Soft-NMS and bounded overlap/consecutive merging are enabled only for
-output selection. Localization and caption modules both learn; the GPT-2 caption
-decoder is randomly initialized. CLIP features are pre-extracted.
-
-Start here: [Molab commands and Drive backup](docs/NO_DEDUP_MOLAB.md).
-The primary branch is `master`; this is an experimental fork, not the unchanged
-official implementation. Earlier experiments remain on their named branches.
+Start here: [Molab commands, outputs, resume and Drive backup](docs/C2_FINAL_MOLAB.md).
+Architecture and source attribution: [Learned proposal mask](LEARNED_PROPOSAL_MASK.md).
+There is one current launcher: `tools/c2_molab.sh`; no C0–C5 queue or concept modes.
 
 ## Original DDVC project
 

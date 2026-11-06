@@ -40,6 +40,8 @@ from misc.gradient_guard import clip_gradients_or_fail
 
 # global clip_gt
 def train(opt):
+    from misc.c2_recipe import validate_method
+    validate_method(vars(opt))
     set_seed(opt.seed)
     runtime=configure_runtime(opt)
     accumulation = getattr(opt, 'gradient_accumulation_steps', 1)
@@ -197,8 +199,6 @@ def train(opt):
         cl_weight = schedule_contrastive(weight_dict, epoch, cl_schedule_time, cl_schedule_val,
                                          corrected=getattr(opt, 'corrected_query_contrastive', False))
         criterion.matcher.cost_cl = 0 if cl_weight == 0 else opt.set_cost_cl
-        if getattr(opt,'dedup_loss_coef',0.) > 0:
-            weight_dict['loss_dedup'] = opt.dedup_loss_coef if epoch >= opt.dedup_start_epoch else 0.
         logger.info('Epoch %s effective loss weights: %s', epoch, weight_dict)
         saved_this_epoch, new_best = False, False
         epoch_start = time.time()

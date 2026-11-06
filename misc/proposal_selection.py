@@ -1,7 +1,6 @@
-"""GT-free temporal selection. Merge is optional, conservative and not a loss."""
+"""Counter-guided Gaussian Soft-NMS for finalized C2; no merge or dedup loss."""
 import copy
 import math
-import re
 
 
 def temporal_iou(a, b):
@@ -10,88 +9,12 @@ def temporal_iou(a, b):
     return intersection / max(union, 1e-12)
 
 
-def caption_tokens(text):
-    return set(re.findall(r'\w+', text.lower()))
-
-
 def joint_score(row, alpha=1., temperature=2.):
     return float(row['proposal_score']) + alpha * float(row['sentence_score']) / (
         float(len(row['sentence'].split())) ** temperature + 1e-5)
 
 
-def merge_proposals(rows, iou_threshold=.7, text_threshold=.9):
-    """Fuse near-identical candidates; never merge just because captions repeat.
-
-    Every member must agree with every other member (no transitive chaining).
-    Boundaries are convex score-weighted averages, not interval unions. Caption,
-    confidence and query_id remain those of the highest-scoring representative.
-    """
-    if not 0 < iou_threshold <= 1 or not 0 < text_threshold <= 1:
-        raise ValueError('Merge thresholds must be in (0,1]')
-    groups=[]
-    for row in sorted(rows, key=lambda p:p['joint_score'], reverse=True):
-        tokens=caption_tokens(row['sentence'])
-        group=next((g for g in groups if tokens and all(
-            temporal_iou(row['timestamp'], other['timestamp']) >= iou_threshold and
-            len(tokens & caption_tokens(other['sentence'])) / max(1,len(tokens | caption_tokens(other['sentence']))) >= text_threshold
-            for other in g)),None)
-        if group is None: groups.append([row])
-        else: group.append(row)
-    merged=[]
-    for group in groups:
-        representative=copy.deepcopy(group[0])
-        if len(group)>1:
-            high=max(p['joint_score'] for p in group)
-            weights=[math.exp(p['joint_score']-high) for p in group]
-            representative['timestamp']=[sum(w*p['timestamp'][j] for w,p in zip(weights,group))/sum(weights) for j in [0,1]]
-            # raw_box is kept as the original representative box for provenance.
-            representative['merged_query_ids']=[p.get('query_id') for p in group]
-            representative['merge_size']=len(group)
-        merged.append(representative)
-    return merged
-
-
-def merge_consecutive_proposals(rows, max_gap=2., max_span=60., max_events=3):
-    """Join successive selected events with the SAME ordered normalized caption.
-
-    Only the already-selected chronological neighbours are considered; a different
-    caption blocks the chain. Tiny overlap is allowed within max_gap seconds.
-    The merged interval covers the complete chain, including its bounded gaps.
-    """
-    if not math.isfinite(max_gap) or max_gap<0 or not math.isfinite(max_span) or max_span<=0:
-        raise ValueError('Consecutive gap/span must be finite seconds, gap>=0 and span>0')
-    if isinstance(max_events,bool) or not isinstance(max_events,int) or max_events<2:
-        raise ValueError('Consecutive merge needs an integer max_events >=2')
-    normalized=lambda p:tuple(re.findall(r'\w+',p['sentence'].lower()))
-    groups=[]
-    for row in sorted(copy.deepcopy(rows),key=lambda p:p['timestamp']):
-        if groups:
-            group=groups[-1];previous=group[-1]
-            gap=row['timestamp'][0]-previous['timestamp'][1]
-            span=row['timestamp'][1]-group[0]['timestamp'][0]
-            if (normalized(row) and all(normalized(row)==normalized(p) for p in group)
-                    and len(group)<max_events and abs(gap)<=max_gap
-                    and row['timestamp'][1]>previous['timestamp'][1] and span<=max_span):
-                group.append(row)
-                continue
-        groups.append([row])
-    output=[]
-    for group in groups:
-        if len(group)==1:
-            output.append(group[0]);continue
-        representative=copy.deepcopy(max(group,key=lambda p:p['joint_score']))
-        representative['timestamp']=[group[0]['timestamp'][0],group[-1]['timestamp'][1]]
-        representative['consecutive_merge_size']=len(group)
-        representative['consecutive_merge_segments']=[p['timestamp'][:] for p in group]
-        representative['merged_query_ids']=[qid for p in group for qid in p.get('merged_query_ids',[p.get('query_id')])]
-        representative['merge_size']=sum(p.get('merge_size',1) for p in group)
-        output.append(representative)
-    return output
-
-
-def select_proposals(rows, top_n, method='topk', sigma=.5, alpha=1., temperature=2.,
-                     merge=False, merge_iou=.7, merge_text=.9, merge_consecutive=False,
-                     consecutive_gap=2., consecutive_max_span=60., consecutive_max_events=3):
+def select_proposals(rows, top_n, method='softnms', sigma=.5, alpha=1., temperature=2.):
     if method not in ('topk','softnms') or not math.isfinite(sigma) or sigma<=0:
         raise ValueError('Invalid proposal selection method/sigma')
     if top_n<0: raise ValueError('Event count cannot be negative')
@@ -102,7 +25,6 @@ def select_proposals(rows, top_n, method='topk', sigma=.5, alpha=1., temperature
             raise ValueError('Invalid predicted temporal interval')
         row['joint_score']=joint_score(row,alpha,temperature)
         if not math.isfinite(row['joint_score']):raise ValueError('Non-finite joint score')
-    if merge:pending=merge_proposals(pending,merge_iou,merge_text)
     if method=='topk':
         chosen=sorted(pending,key=lambda p:p['joint_score'],reverse=True)[:int(top_n)]
     else:
@@ -117,6 +39,4 @@ def select_proposals(rows, top_n, method='topk', sigma=.5, alpha=1., temperature
                 updated.append((p,s*factor if s>0 else s-abs(s)*(1-factor)))
             pending=updated
     chosen=sorted(chosen,key=lambda p:p['timestamp'])
-    if merge_consecutive:
-        chosen=merge_consecutive_proposals(chosen,consecutive_gap,consecutive_max_span,consecutive_max_events)
     return chosen

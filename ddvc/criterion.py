@@ -6,7 +6,6 @@
 import torch
 import torch.nn.functional as F
 from torch import nn
-from ddvc.dedup_loss import normalized_dedup_loss
 
 from misc.detr_utils import box_ops
 from misc.detr_utils.misc import (accuracy, get_world_size,
@@ -437,10 +436,6 @@ class SetCriterion_cl(nn.Module):
             kwargs = {}
             losses.update(self.get_loss(loss, outputs, targets, last_indices, num_boxes, **kwargs))
 
-        if getattr(self.opt,'dedup_loss_coef',0.) > 0:
-            losses.update(normalized_dedup_loss(outputs,targets,last_indices,
-                getattr(self.opt,'dedup_iou_threshold',.5),
-                getattr(self.opt,'dedup_confidence_threshold',.2)))
 
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if 'aux_outputs' in outputs:

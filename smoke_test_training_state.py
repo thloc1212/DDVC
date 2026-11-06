@@ -20,6 +20,8 @@ from torch.utils.data import DataLoader
 from misc.training_state import (atomic_save, capture_rng, restore_rng, snapshot,
                                  schedule_contrastive, validate_resume, plain_metadata)
 from misc.runtime_perf import amp_context,configure_runtime,vram_metrics,append_performance
+from misc.nonfinite_diagnostics import report_nonfinite_loss
+from misc.gradient_guard import clip_gradients_or_fail
 
 
 def main():
@@ -77,6 +79,8 @@ def main():
         able_ret=False,scheduled_sampling_start=-1,set_cost_cl=0,save_mode=False,debug=False,
         disable_tqdm=True,transformer_input_type='queries',grad_clip=10,save_checkpoint_every=1,
         min_epoch_when_save=0,save_all_checkpoint=False,caption_decoder_type='gpt2',criteria_for_best_ckpt='dvc',ec_alpha=1.)
+    from misc.c2_recipe import METHOD
+    defaults.update(METHOD)
     with tempfile.TemporaryDirectory() as tmp,contextlib.redirect_stdout(io.StringIO()):
         full=SimpleNamespace(**defaults,save_dir=str(Path(tmp)/'full'))
         namespace['train'](full)

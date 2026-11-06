@@ -103,7 +103,7 @@ def vocabulary(train):
 def make_config(prepared,run_id,save_root,mode,vocab_size,signature):
     helper=load_helper()
     cfg=json.loads((ROOT/'tools/kaggle_mask_recipe.json').read_text())
-    cfg.update(helper.experiment_options('no_dedup_same_merges'))
+    cfg.update(helper.experiment_options('c2'))
     data=prepared/'data/anet';anno=data/'captiondata'
     cfg.update(experiment_recipe='activitynet_current_model_q10',dataset='anet',target_domain='anet',bank_type=['anet'],num_queries=10,
         cfg_path='',id=run_id,exp_name=run_id,fixed_run_id=True,save_dir=str(save_root),
@@ -122,13 +122,15 @@ def make_config(prepared,run_id,save_root,mode,vocab_size,signature):
 
 
 def validate_config(cfg):
+    from misc.c2_recipe import validate_method
+    validate_method(cfg)
     expected=make_config(Path('/unused'),'unused',Path('/unused'),'full',0,'unused')
     variable={'cfg_path','id','exp_name','save_dir','train_caption_file','val_caption_file','visual_feature_folder',
         'gt_file_for_eval','gt_file_for_auc','gt_file_for_para_eval','dict_file','vocab_size','bank_path',
         'epoch','data_signature','start_from','start_from_mode','current_lr'}
     differences={k:(cfg.get(k),v) for k,v in expected.items() if k not in variable and cfg.get(k)!=v}
     if differences:raise ValueError('Current model recipe drift: '+repr(differences))
-    if cfg['epoch'] not in (2,15):raise ValueError('Expected 2 smoke or 15 training epochs')
+    if cfg['epoch'] not in (2,8,15):raise ValueError('Expected 2 smoke, 8 ANET or legacy 15 asset epochs')
     for key in ('train_caption_file','val_caption_file','dict_file'):
         if not Path(cfg[key]).is_file():raise FileNotFoundError(cfg[key])
     signature=hashlib.sha256(b''.join(Path(cfg[k]).read_bytes() for k in ('train_caption_file','val_caption_file','dict_file'))).hexdigest()
@@ -139,7 +141,7 @@ def validate_config(cfg):
     if set(train)&set(val):raise ValueError('Train/validation leakage')
     refs=[json.loads(Path(p).read_text()) for p in cfg['gt_file_for_eval']]
     if set().union(*(set(r) for r in refs))!=set(val):raise ValueError('Validation reference IDs differ from loader IDs')
-    print('ACTIVITYNET_CURRENT_MODEL_OK',len(train),'train',len(val),'validation; 10 queries; dedup OFF; mask/Soft-NMS/merges ON',flush=True)
+    print('ACTIVITYNET_ASSETS_OK',len(train),'train',len(val),'validation; 10 queries; C2 mask; Soft-NMS only',flush=True)
 
 
 def ensure_feature_file(path):

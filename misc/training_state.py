@@ -79,30 +79,22 @@ def snapshot(model, optimizer, scheduler, epoch, iteration, info, config, phase,
 
 
 def validate_resume(config, previous):
-    # Concept vocabulary meaning and method must stay fixed across a resume.
-    if config.get('event_concepts',False) or previous.get('event_concepts',False):
-        for key in ('event_concepts','concept_condition_prefix','concept_vocab_sha256',
-                    'concept_loss_coef','concept_hidden_dim','concept_embedding_dim'):
-            if config.get(key) != previous.get(key):
-                raise ValueError('Resume concept recipe changed: '+key)
+    from misc.c2_recipe import validate_method
+    validate_method(config)
+    validate_method(previous)
     if config.get('gradient_accumulation_steps', 1) != previous.get('gradient_accumulation_steps', 1):
         raise ValueError('Resume effective batch changed; start a new run for a batch ablation.')
     for key,default in [('precision','fp32'),('allow_tf32',False),('nthreads',0),('pin_memory',False)]:
         if config.get(key,default)!=previous.get(key,default):
             raise ValueError('Resume runtime precision/loader recipe changed: '+key)
-    defaults={'dedup_loss_coef':0.,'dedup_start_epoch':1,'dedup_iou_threshold':.5,
-              'dedup_confidence_threshold':.2,'eval_selection_method':'topk',
-              'eval_softnms_sigma':.5,'eval_merge_duplicates':False,'eval_merge_iou':.7,
-              'eval_merge_text_similarity':.9,'selection_experiment':'baseline',
-              'eval_merge_consecutive':False,'eval_consecutive_gap':2.,
-              'eval_consecutive_max_span':60.,'eval_consecutive_max_events':3}
+    defaults={'eval_selection_method':'softnms','eval_softnms_sigma':.5}
     for key,default in defaults.items():
         if config.get(key,default)!=previous.get(key,default):
-            raise ValueError('Resume dedup/selection recipe changed: '+key)
+            raise ValueError('Resume selection recipe changed: '+key)
     # Paths can change when restoring Kaggle outputs, but architecture/data recipe must not.
     keys = ('hidden_dim', 'num_queries', 'gpt_layer', 'dec_layers', 'enc_layers',
-            'learned_proposal_mask', 'local_visual_attention', 'proposal_mask_bins',
-            'proposal_mask_encoding_dim', 'mask_query_conditioning', 'mask_target',
+            'learned_proposal_mask', 'proposal_mask_bins',
+            'proposal_mask_encoding_dim', 'mask_target',
             'mask_gate_min', 'mask_gate_max', 'mask_context_ratio', 'mask_min_frames',
             'mask_prune_threshold', 'mask_balanced_bce', 'proposal_mask_loss_coef',
             'corrected_query_contrastive', 'seed', 'epoch', 'lr', 'optimizer_type',
