@@ -191,6 +191,24 @@ class RecoveryTests(unittest.TestCase):
 
 
 class AuthTests(unittest.TestCase):
+    def test_provider_error_is_visible_but_tokens_and_client_secret_are_redacted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / 'rclone.conf'
+            config.write_text('[kltnbackup]\ntype=drive\nclient_secret=FAKE_SECRET\n'
+                              'token={"access_token":"FAKE_ACCESS","refresh_token":"1//FAKE_REFRESH"}\n')
+            stderr = ('Google Drive API has not been used in project before or it is disabled. '
+                      'client=FAKE_SECRET access=FAKE_ACCESS refresh=1%2F%2FFAKE_REFRESH')
+            result = q.subprocess.CompletedProcess([], 1, stdout='DO_NOT_PRINT_STDOUT', stderr=stderr)
+            with patch.object(q.subprocess, 'run', return_value=result):
+                with self.assertRaises(RuntimeError) as error:
+                    q.Drive(config, 'kltnbackup', 'KLTNRUNS').call('lsf', 'kltnbackup:', quiet=True)
+            message = str(error.exception)
+            self.assertIn('API has not been used', message)
+            self.assertNotIn('FAKE_SECRET', message)
+            self.assertNotIn('FAKE_ACCESS', message)
+            self.assertNotIn('FAKE_REFRESH', message)
+            self.assertNotIn('DO_NOT_PRINT_STDOUT', message)
+
     def test_auth_never_prints_secret_and_preserves_refreshed_config(self):
         raw = b'[kltnbackup]\ntype = drive\nclient_id = fake-client\nclient_secret = FAKE_SECRET\ntoken = {"access_token":"FAKE_ACCESS","refresh_token":"FAKE_REFRESH"}\n'
         with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()) as log:

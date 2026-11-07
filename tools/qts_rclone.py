@@ -19,6 +19,7 @@ import tempfile
 import threading
 import time
 import uuid
+from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT.parent
@@ -122,6 +123,29 @@ def restore_auth(env_file, config, remote):
     announce('AUTH_RESTORED', config, '(no credential values printed)')
 
 
+def redact_rclone_error(message, config):
+    """Keep provider diagnostics while removing credentials and their URL encodings."""
+    try:
+        cfg = configparser.ConfigParser(interpolation=None)
+        cfg.read_string(Path(config).read_text(encoding='utf8'))
+        secrets = []
+        for section in cfg.values():
+            for key in ('client_secret', 'service_account_credentials'):
+                if section.get(key):
+                    secrets.append(section[key])
+            if section.get('token'):
+                token = json.loads(section['token'])
+                secrets += [str(v) for k, v in token.items() if k in ('access_token', 'refresh_token', 'id_token') and v]
+        for secret in sorted(secrets, key=len, reverse=True):
+            for representation in (secret, quote(secret, safe=''), json.dumps(secret)[1:-1]):
+                message = message.replace(representation, '[REDACTED]')
+        message = re.sub(r'(?i)(Bearer\s+)\S+', r'\1[REDACTED]', message)
+        message = re.sub(r'(?i)([?&](?:access_token|refresh_token|client_secret|code)=)[^&\s\"<>]+', r'\1[REDACTED]', message)
+        return message.strip()[:6000]
+    except Exception:
+        return 'Provider diagnostic withheld because the private config could not be safely parsed.'
+
+
 class Drive:
     def __init__(self, config, remote, root):
         if not re.fullmatch(r'[A-Za-z0-9_-]+', remote):
@@ -142,8 +166,10 @@ class Drive:
         else:
             result = subprocess.run(command)
         if result.returncode:
-            # Avoid ever dumping a config, auth command or environment in an error.
-            raise RuntimeError('rclone ' + str(args[0]) + ' failed; exit=' + str(result.returncode))
+            detail = redact_rclone_error(result.stderr or '', self.config) if quiet else ''
+            # Never print captured stdout: a cat command may have read private data.
+            raise RuntimeError('rclone ' + str(args[0]) + ' failed; exit=' + str(result.returncode)
+                               + ('\n' + detail if detail else ''))
         return result.stdout if quiet else None
 
     def read_json(self, remote):
