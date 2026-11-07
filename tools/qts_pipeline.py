@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 import zipfile
+from collections import deque
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -239,11 +240,18 @@ def logged(command, log, pid=None):
         process=subprocess.Popen(command,cwd=ROOT,stdout=stream,stderr=subprocess.STDOUT)
         if pid:pid.write_text(str(process.pid),encoding='utf8')
         status=process.wait()
-        if status:raise subprocess.CalledProcessError(status,command)
+        if status:
+            stream.flush()
+            print('COMMAND_FAILED; last log lines from',log,flush=True)
+            with log.open(encoding='utf8',errors='replace') as failed:
+                for line in deque(failed,maxlen=100):print(line,end='',flush=True)
+            raise subprocess.CalledProcessError(status,command)
 
 
 def smoke(args):
     path=config_path(args.work,args.dataset,args.variant);cfg=check(path)
+    logged([sys.executable,'-u','tools/prepare_gpt2_tokenizer.py'],
+           args.work/'logs'/(cfg['id']+'.tokenizer.log'))
     if args.variant=='set':
         logged([sys.executable,'-u','smoke_test_event_set.py','--cuda'],
                args.work/'logs'/(cfg['id']+'.heads_smoke.log'))

@@ -549,6 +549,8 @@ def worker(args, drive):
             launcher = str(ROOT / 'tools/qts_molab.sh')
             if not (WORK / 'provenance/cuda_ready').is_file():
                 subprocess.run(['bash', launcher, 'setup'], cwd=ROOT, check=True)
+            # Also stage tokenizer on retry/restore when CUDA setup was already done.
+            subprocess.run([sys.executable,'tools/prepare_gpt2_tokenizer.py'],cwd=ROOT,check=True)
             cached = pull_data(drive, args.dataset)
             if args.resume:
                 # Restore feature bytes directly from the verified same-recipe base bundle.

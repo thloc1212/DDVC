@@ -164,6 +164,25 @@ are not overwritten. Each Drive run also has a unique UTC+UUID ID and variant.
 Use fresh sessions; do not edit/checkout source while an old worker is alive.
 The private env/config is never included in data/source/recovery uploads.
 
+### GPT-2 tokenizer bootstrap
+
+`tools/prepare_gpt2_tokenizer.py` downloads only vocab.json, merges.txt and
+tokenizer_config.json from pinned official GPT-2 revision
+`607a30d783dfa663caf39e06633721c8d4cfcd7e`; SHA256 is verified per file, then
+the vendored tokenizer is loaded locally and checked (50257 IDs, EOS50256,
+known hello/world BPE IDs). Total roughly1.43MiB; no model weights are downloaded.
+The directory `source/gpt2` satisfies the existing relative from_pretrained('gpt2')
+calls, bypassing a failed Hub HEAD/cache resolution. Decoder construction stays
+`GPT2LMHeadModel(configuration)` with random weights; model/training recipe unchanged.
+Setup, worker retry and direct smoke stage/verify the small assets automatically.
+The receipt `provenance/gpt2_tokenizer.json` is included in run backup.
+
+For an existing failed pre-training smoke on the older pinned commit, do not
+checkout a different commit or edit the run manifest. Fetch the updated helper
+only, run it with `--target /marimo/DDVC_QTS/source/gpt2`, then run
+`qts_drive.sh start anet --retry` (or yc2). CUDA/data/config stay in place.
+No checkpoint was produced yet, so this is still a fresh training run.
+
 ## Logs and saved evidence
 
 ```text

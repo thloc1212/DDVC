@@ -17,3 +17,4 @@ assets/
 rclone.conf
 rclone.conf.*
 secrets/
+/gpt2/

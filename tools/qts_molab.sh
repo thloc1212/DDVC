@@ -27,6 +27,7 @@ case "$COMMAND" in
    logged clip uv pip install --python "$PY" --no-build-isolation --no-deps 'git+https://github.com/openai/CLIP.git@dcba3cb2e2827b402d2701e7e1c7d9fed8a20ef1'
    "$PY" -c 'import json,torch,torchvision; from pathlib import Path; assert json.loads(Path("../provenance/native_torch_before.json").read_text())==[torch.__version__,torchvision.__version__],"Native Torch changed"'
    "$PY" tools/molab_pipeline.py patch
+   logged tokenizer "$PY" tools/prepare_gpt2_tokenizer.py
    logged cpu_qts "$PY" smoke_test_temporal_support.py
    logged cpu_event_set "$PY" smoke_test_event_set.py
    logged caption_targets "$PY" smoke_test_caption_targets.py --gpt2
