@@ -155,6 +155,12 @@ def parse_opts(argv=None, write_options=True):
     parser.add_argument('--temporal_support_max_delta', type=float, default=2.)
     parser.add_argument('--temporal_support_loss_coef', type=float, default=1.)
     parser.add_argument('--temporal_refine_loss_coef', type=float, default=1.)
+    parser.add_argument('--relation_aware_event_set', action='store_true', default=False)
+    parser.add_argument('--event_set_dim', type=int, default=128)
+    parser.add_argument('--event_set_quality_coef', type=float, default=.5)
+    parser.add_argument('--event_set_relation_coef', type=float, default=.2)
+    parser.add_argument('--event_set_count_ordinal_coef', type=float, default=.2)
+    parser.add_argument('--event_set_input_grad', action='store_true', default=False)
     parser.add_argument('--full_event_supervision', action='store_true', default=False)
     parser.add_argument('--counter_class_rates', type=float, nargs='+', default=None)
     parser.add_argument('--counter_prior_source', type=str, default='legacy')
@@ -367,7 +373,7 @@ def parse_opts(argv=None, write_options=True):
     parser.add_argument('--crop_num', type=int, default=2)
 
     # reranking
-    parser.add_argument('--eval_selection_method', choices=['softnms'], default='softnms')
+    parser.add_argument('--eval_selection_method', choices=['softnms','topk','event_set'], default='softnms')
     parser.add_argument('--eval_softnms_sigma', type=float, default=.5)
     parser.add_argument('--ec_alpha', type=float, default=0.3)
 

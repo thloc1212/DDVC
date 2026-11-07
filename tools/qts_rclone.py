@@ -24,6 +24,7 @@ from urllib.parse import quote
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT.parent
 DATA_PROTOCOL = 'qts-base-assets-v1'
+RUN_VARIANT = 'set'
 TEXT = {'.json', '.jsonl', '.yml', '.yaml', '.log', '.txt', '.tsv', '.csv'}
 
 
@@ -52,7 +53,7 @@ def revision():
 
 
 def run_name(dataset):
-    return dataset + '_qts_support_e' + ('15' if dataset == 'yc2' else '6') + '_b1'
+    return dataset + '_qts_' + RUN_VARIANT + '_e' + ('15' if dataset == 'yc2' else '6') + '_b1'
 
 
 def session_path(dataset):
@@ -406,6 +407,7 @@ class Recovery:
                 if not any(n.endswith('/model-last.pth') for n in files):
                     raise ValueError('No resume checkpoint staged')
                 metadata = dict(format_version=1, created_ns=time.time_ns(), source_commit=revision(),
+                                variant=RUN_VARIANT,
                                 work=str(WORK), dataset=dataset, run_id=self.state['run_id'],
                                 files=files, slot=slot)
                 self.drive.copy(staged, destination)
@@ -428,7 +430,8 @@ class Recovery:
                 pass
         for _, slot, meta in sorted(candidates, reverse=True):
             if (meta.get('dataset') != self.state['dataset'] or meta.get('run_id') != self.state['run_id']
-                    or meta.get('work') != str(WORK) or meta.get('source_commit') != revision()):
+                    or meta.get('work') != str(WORK) or meta.get('source_commit') != revision()
+                    or meta.get('variant') != RUN_VARIANT):
                 raise ValueError('Restore needs the same source commit, dataset and work root')
             with tempfile.TemporaryDirectory(dir=WORK, prefix='.qts-restore-') as tmp:
                 staged = Path(tmp) / 'payload'
@@ -488,7 +491,7 @@ def launch(args):
         if args.resume or args.retry:
             raise FileNotFoundError('Restore the run first, or start a fresh run without flags')
         state = dict(dataset=args.dataset, run_id=time.strftime('%Y%m%dT%H%M%SZ', time.gmtime()) + '_' + uuid.uuid4().hex[:12],
-                     source_commit=revision(), work=str(WORK), remote=args.remote, root=args.root)
+                     source_commit=revision(), work=str(WORK), remote=args.remote, root=args.root, variant=RUN_VARIANT)
     if (state['source_commit'] != revision() or state['remote'] != args.remote or state['root'] != args.root):
         raise ValueError('Session source or Drive destination differs')
     run = WORK / 'runs' / name
@@ -569,7 +572,7 @@ def worker(args, drive):
             write_json(state_file, state)
             drive.put_json(backup.remote + '/RUN_MANIFEST.json', state)
             command = [sys.executable, '-u', 'tools/qts_pipeline.py', 'train', '--work', str(WORK),
-                       '--dataset', args.dataset, '--variant', 'support']
+                       '--dataset', args.dataset, '--variant', RUN_VARIANT]
             if args.resume:
                 command += ['--resume']
             # Source the CUDA environment set up by the original launcher in a child shell.
@@ -634,6 +637,10 @@ def main():
         worker(args, drive)
     elif args.command == 'logs':
         logs = WORK / 'logs'
+        if not session_path(args.dataset).is_file():
+            raise FileNotFoundError('No run started here. First run: qts_drive.sh start ' + args.dataset)
+        for suffix in ('.launch.log','.log'):
+            (logs / (run_name(args.dataset)+suffix)).touch(exist_ok=True)
         os.execvp('tail', ['tail', '-n', '50', '-F', str(logs / (args.dataset + '.drive.log')),
                   str(logs / (run_name(args.dataset) + '.launch.log')), str(logs / (run_name(args.dataset) + '.log'))])
     elif args.command == 'restore':
@@ -642,7 +649,7 @@ def main():
         if session_path(args.dataset).exists():
             raise FileExistsError('Restore on a fresh work root; local session state already exists')
         state = dict(dataset=args.dataset, run_id=args.run_id, work=str(WORK), source_commit=revision(),
-                     remote=args.remote, root=args.root, status='RESTORED')
+                     remote=args.remote, root=args.root, status='RESTORED',variant=RUN_VARIANT)
         Recovery(drive, state).restore()
         write_json(session_path(args.dataset), state)
     else:

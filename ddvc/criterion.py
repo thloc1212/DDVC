@@ -190,6 +190,9 @@ class SetCriterion(nn.Module):
         if 'temporal_support' in outputs:
             from ddvc.temporal_support import temporal_support_objective
             losses.update(temporal_support_objective(outputs['temporal_support'], targets, last_indices[0]))
+        if 'event_set' in outputs:
+            from ddvc.event_set import event_set_objective
+            losses.update(event_set_objective(outputs['event_set'], targets, last_indices[0], outputs['pred_count']))
 
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if 'aux_outputs' in outputs:
@@ -462,6 +465,9 @@ class SetCriterion_cl(nn.Module):
         if 'temporal_support' in outputs:
             from ddvc.temporal_support import temporal_support_objective
             losses.update(temporal_support_objective(outputs['temporal_support'], targets, last_indices[0]))
+        if 'event_set' in outputs:
+            from ddvc.event_set import event_set_objective
+            losses.update(event_set_objective(outputs['event_set'], targets, last_indices[0], outputs['pred_count']))
 
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if 'aux_outputs' in outputs:

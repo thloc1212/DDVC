@@ -1,5 +1,8 @@
 # QTS: hai tài khoản Molab, toàn bộ thao tác bằng terminal + rclone
 
+**Historical support-variant runbook.** On `exp/relation-aware-event-set`, use
+`docs/RELATION_AWARE_EVENT_SET_MOLAB.md`; defaults/run names now use variant `set`.
+
 Nhánh: https://github.com/thloc1212/DDVC/tree/exp/query-temporal-support
 
 Model gốc của experiment này ở commit `89a3f89f0c92153150abdbdcd1108213e2b64111`.

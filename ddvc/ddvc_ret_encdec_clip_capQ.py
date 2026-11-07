@@ -245,6 +245,13 @@ class CM2(nn.Module):
                 torch.default_generator.manual_seed(1733)
                 self.temporal_support = QueryTemporalSupport(hidden_dim,
                     opt.feature_dim, opt.temporal_support_dim, opt.temporal_support_max_delta)
+        self.event_set_heads = None
+        if getattr(opt, 'relation_aware_event_set', False):
+            from ddvc.event_set import EventSetHeads
+            with torch.random.fork_rng(devices=[]):
+                torch.default_generator.manual_seed(1817)
+                self.event_set_heads = EventSetHeads(hidden_dim, opt.feature_dim,
+                    opt.event_set_dim, not opt.event_set_input_grad)
 
     def get_filter_rule_for_encoder(self):
         filter_rule = lambda x: 'input_proj' in x \
@@ -895,6 +902,9 @@ class CM2(nn.Module):
         out = {k: v[-1] for k, v in all_out.items()}
         if support_context is not None:
             out['temporal_support'] = support_context
+        if getattr(self, 'event_set_heads', None) is not None:
+            out['event_set'] = self.event_set_heads(hs[-1], hs_cap[-1], dt['video_tensor'],
+                out['pred_boxes'], out['pred_logits'], dt['video_mask'])
         if self.aux_loss:
             ks, vs = list(zip(*(all_out.items())))
             out['aux_outputs'] = [{ks[i]: vs[i][j] for i in range(len(ks))} for j in range(num_pred - 1)]
@@ -976,6 +986,10 @@ class CM2(nn.Module):
         out = {k: v[-1] for k, v in all_out.items()}
         if support_context is not None:
             out['temporal_support'] = support_context
+
+        if getattr(self, 'event_set_heads', None) is not None:
+            out['event_set'] = self.event_set_heads(hs[-1], hs_cap[-1], dt['video_tensor'],
+                out['pred_boxes'], out['pred_logits'], dt['video_mask'])
 
         if self.aux_loss:
             ks, vs = list(zip(*(all_out.items())))
@@ -1577,6 +1591,10 @@ def build(args):
     if getattr(args, 'query_temporal_support', False):
         weight_dict['loss_temporal_support'] = args.temporal_support_loss_coef
         weight_dict['loss_temporal_refine'] = args.temporal_refine_loss_coef
+    if getattr(args, 'relation_aware_event_set', False):
+        weight_dict['loss_event_quality'] = args.event_set_quality_coef
+        weight_dict['loss_event_relation'] = args.event_set_relation_coef
+        weight_dict['loss_count_ordinal'] = args.event_set_count_ordinal_coef
     losses = ['labels', 'boxes', 'cardinality']
 
     criterion = SetCriterion_cl(args.num_classes, matcher, weight_dict, losses, focal_alpha=args.focal_alpha,

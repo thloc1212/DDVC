@@ -1,6 +1,12 @@
-# DDVC + Query-conditioned Temporal Support Learning
+# DDVC + QTS + Relation-aware Event Set Selection
 
-Branch: [`exp/query-temporal-support`](https://github.com/thloc1212/DDVC/tree/exp/query-temporal-support).
+Branch: [`exp/relation-aware-event-set`](https://github.com/thloc1212/DDVC/tree/exp/relation-aware-event-set).
+
+Start here: [fresh two-account terminal/rclone runs, model, losses and comparisons](docs/RELATION_AWARE_EVENT_SET_MOLAB.md).
+Default variant is **set**: QTS + localization-quality/pair-relation heads,
+an auxiliary ordered-count objective, and GT-free selection over multiple output
+cardinalities. Distinct nested events are not duplicate targets. No benchmark
+improvement is claimed before full GPU experiments.
 
 New experiment based on C1: learned proposal mask, old mask loss **0.0**.
 A query-conditioned visual-support module refines final-layer intervals before
@@ -17,16 +23,17 @@ GPT-2 stays randomly initialized; CLIP input features remain frozen.
 | Count loss coefficient | **1.0** | **1.0** |
 
 All GT events/captions are retained, with explicit capacity checks. Counter
-class frequencies are derived from full training annotations only. Default
-selection remains counter-guided Gaussian Soft-NMS sigma .5; no merge,
+class frequencies are derived from full training annotations only. The original
+`support` control uses counter-guided Gaussian Soft-NMS sigma .5; no merge,
 concept heads or deduplication loss. Seed777, batch1, accumulation1, FP32,
 TF32 off, Adam LR5e-5. New query/count dimensions require fresh training.
 
-Start here: [two-account Molab commands, architecture, ablations, outputs and Drive backup](docs/QUERY_TEMPORAL_SUPPORT_MOLAB.md).
+Original QTS: [architecture, ablations, outputs and Drive backup](docs/QUERY_TEMPORAL_SUPPORT_MOLAB.md).
 For terminal-only rclone runs with `KLTN_DRIVE_PRIVATE.env`, shared data cache and
-verified checkpoint recovery, use the [rclone two-account runbook](docs/QTS_RCLONE_TWO_ACCOUNTS.md)
+verified checkpoint recovery, use the [new event-set runbook](docs/RELATION_AWARE_EVENT_SET_MOLAB.md)
 and `tools/qts_drive.sh`.
-Default launcher: `tools/qts_molab.sh`; variants: `baseline`, `refine`, `support`.
+Default launcher: `tools/qts_drive.sh` (rclone); direct launcher `tools/qts_molab.sh`.
+Variants: `baseline`, `refine`, `support`, `set`; the new branch defaults to `set`.
 Real-model GPU smoke is required before full train/resume. No new benchmark
 scores are claimed from CPU validation.
 

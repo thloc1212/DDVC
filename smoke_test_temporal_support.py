@@ -136,7 +136,7 @@ def preparation_test():
                 gt_file_for_para_eval=[str(paths['val'])])
             base['data_signature']=hashlib.sha256(b''.join(Path(base[k]).read_bytes() for k in ['train_caption_file','val_caption_file','dict_file'])).hexdigest()
             source=assets/'config.yml';source.write_text(yaml.safe_dump(base))
-            for variant in ['baseline','refine','support']:
+            for variant in ['baseline','refine','support','set']:
                 cli.prepare(SimpleNamespace(work=work,dataset=ds,source_config=source,features=None,variant=variant))
                 path=cli.config_path(work,ds,variant);cfg=cli.check(path)
                 assert cfg['epoch']==(15 if ds=='yc2' else 6) and cfg['num_queries']==(50 if ds=='yc2' else 30)
@@ -144,6 +144,8 @@ def preparation_test():
                 assert cfg['counter_class_rates'][16 if ds=='yc2' else 27]==1/sizes[0]
                 assert cfg['proposal_mask_loss_coef']==0 and cfg['count_loss_coef']==1
                 assert cfg['query_temporal_support']==(variant!='baseline')
+                assert cfg['relation_aware_event_set']==(variant=='set')
+                assert cfg['eval_selection_method']==('event_set' if variant=='set' else 'softnms')
                 smoke=yaml.safe_load((path.parent/'smoke/config.yml').read_text())
                 assert max(len(r['timestamps']) for r in json.loads(Path(smoke['train_caption_file']).read_text()).values())==(16 if ds=='yc2' else 27)
                 assert Path(cfg['train_caption_file']).read_bytes()==paths['train'].read_bytes()
@@ -162,7 +164,7 @@ def preparation_test():
                 subprocess.run([sys.executable,'tools/qts_pipeline.py','check','--config',str(path)],cwd=ROOT,check=True,stdout=subprocess.DEVNULL)
                 subprocess.run([sys.executable,'tools/qts_pipeline.py','prepare','--work',str(work),
                     '--dataset',ds,'--variant',variant,'--source-config',str(source)],cwd=ROOT,check=True,stdout=subprocess.DEVNULL)
-    print('PASS preparation: both full splits, 3 ablations, train-only prior, expanded budgets, fresh runs, exact input bytes')
+    print('PASS preparation: both full splits, 4 ablations, train-only prior, expanded budgets, fresh runs, exact input bytes')
 
 
 if __name__=='__main__':

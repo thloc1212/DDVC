@@ -8,8 +8,8 @@ PY=${DDVC_PYTHON:-/tmp/uv-venv/bin/python}
 COMMAND=${1:-help}
 DATASET=${2:-yc2}
 case "$DATASET" in yc2) EPOCHS=15;; anet) EPOCHS=6;; *) echo 'Dataset must be yc2 or anet'; exit 2;; esac
-VARIANT=${3:-support}
-case "$VARIANT" in baseline|refine|support) ;; *) echo 'Variant must be baseline, refine or support'; exit 2;; esac
+VARIANT=${3:-set}
+case "$VARIANT" in baseline|refine|support|set) ;; *) echo 'Variant must be baseline, refine, support or set'; exit 2;; esac
 RUN=${DATASET}_qts_${VARIANT}_e${EPOCHS}_b1
 export CUDA_VISIBLE_DEVICES=${DDVC_GPU:-0} TOKENIZERS_PARALLELISM=false PYTHONUNBUFFERED=1 MPLBACKEND=Agg LC_ALL=C LANG=C
 export PYTHONPATH="$REPO:$REPO/ddvc/ops${PYTHONPATH:+:$PYTHONPATH}"
@@ -28,8 +28,9 @@ case "$COMMAND" in
    "$PY" -c 'import json,torch,torchvision; from pathlib import Path; assert json.loads(Path("../provenance/native_torch_before.json").read_text())==[torch.__version__,torchvision.__version__],"Native Torch changed"'
    "$PY" tools/molab_pipeline.py patch
    logged cpu_qts "$PY" smoke_test_temporal_support.py
+   logged cpu_event_set "$PY" smoke_test_event_set.py
    logged caption_targets "$PY" smoke_test_caption_targets.py --gpt2
-   logged model_qts "$PY" smoke_test_proposal_mask.py --qts
+   logged model_qts "$PY" smoke_test_proposal_mask.py --qts --event-set
    logged java "$PY" -u tools/molab_pipeline.py java --target "$WORK/tools/java"
    if [[ $("$PY" -c 'import torch; print(torch.version.cuda)') == 13.0 ]]; then
      logged toolchain "$PY" -u tools/molab_cuda130.py --work "$WORK"
@@ -71,7 +72,7 @@ case "$COMMAND" in
    echo "LAUNCH/SMOKE LOG: $WORK/logs/$RUN.launch.log"
    echo "TRAIN LOG: $WORK/logs/$RUN.log"
    ;;
- report|export|restage)
+ report|export|restage|compare)
    ARGS=(); if [[ "$COMMAND" == restage && -n ${DDVC_FEATURES:-} ]]; then ARGS+=(--features "$DDVC_FEATURES"); fi
    "$PY" -u tools/qts_pipeline.py "$COMMAND" --work "$WORK" --dataset "$DATASET" --variant "$VARIANT" "${ARGS[@]}"
    ;;
@@ -81,5 +82,5 @@ case "$COMMAND" in
      if [[ -f "$FILE" ]]; then ps -p "$(cat "$FILE")" -o pid,etime,%cpu,%mem,args || true; fi
    done
    ;;
- *) echo 'qts_molab.sh setup|prepare|smoke|train|resume|logs|status|report|restage|export yc2|anet [baseline|refine|support]'; exit 2;;
+ *) echo 'qts_molab.sh setup|prepare|smoke|train|resume|logs|status|report|restage|export|compare yc2|anet [baseline|refine|support|set]'; exit 2;;
 esac

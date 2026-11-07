@@ -13,6 +13,7 @@ from tqdm import tqdm
 from os.path import dirname, abspath
 import math
 from misc.proposal_selection import select_proposals
+from misc.event_set_selection import select_event_set
 from misc.runtime_perf import amp_context
 
 ddvc_dir = dirname(abspath(__file__))
@@ -137,15 +138,29 @@ def save_dvc_json(out_json, path):
         json.dump(out_json, f)
 
 def reranking(p_src, alpha, cl_score_weight, temperature, fix_topN=-1, increase_num=0,
-              method='softnms', sigma=.5):
-    print('C2 SELECTION method={} sigma={} alpha={} temp={}'.format(method,sigma,alpha,temperature))
+              method='softnms', sigma=.5, event_set_settings=None):
+    print('PROPOSAL_SELECTION method={} sigma={} alpha={} temp={}'.format(method,sigma,alpha,temperature))
     with open(p_src) as stream:d=json.load(stream)
+    if method=='event_set':d['event_set_selection']={}
     for key,rows in d['results'].items():
         if not rows:continue
         top_n=rows[0]['pred_event_count'] if fix_topN<0 else fix_topN
         fraction=increase_num-math.floor(increase_num)
         extra=math.floor(increase_num)+(np.random.binomial(1,p=fraction,size=None) if fraction>0 else 0)
-        d['results'][key]=select_proposals(rows,int(top_n+extra),method,sigma,alpha,temperature)
+        if method=='event_set':
+            if fix_topN>=0 or increase_num!=0:
+                raise ValueError('Joint event-set selection cannot use a hard externally supplied count')
+            context=d['event_set_predictions'][key]
+            selected,diagnostics=select_event_set(rows,context['duplicate_probs'],
+                d['counter_predictions'][key]['logits'],event_set_settings)
+            d['results'][key]=selected
+            d['event_set_selection'][key]=diagnostics
+            d['counter_predictions'][key]['selected_N']=len(selected)
+        else:
+            d['results'][key]=select_proposals(rows,int(top_n+extra),method,sigma,alpha,temperature)
+    # Full pair matrices remain in the raw file for replay, not duplicated into
+    # every final/reranked metric file and every Drive recovery snapshot.
+    d.pop('event_set_predictions',None)
     d['selection']={'method':method,'sigma':sigma}
     suffix='_{}_sigma{}'.format(method,sigma)
     save_path=p_src+'_rerank_alpha{}_temp{}{}.json'.format(alpha,temperature,suffix)
@@ -165,6 +180,8 @@ def evaluate(model,memory_bank,criterion,contrastive_criterion, postprocessors, 
     opt = loader.dataset.opt
     if getattr(opt,'full_event_supervision',False):
         out_json['counter_predictions']={}
+    if getattr(opt,'relation_aware_event_set',False):
+        out_json['event_set_predictions']={}
     
     loss_sum = OrderedDict()
     len_check=0
@@ -241,6 +258,18 @@ def evaluate(model,memory_bank,criterion,contrastive_criterion, postprocessors, 
                     out_json['counter_predictions'][video_name]={
                         'logits':output['pred_count'][idx].detach().float().cpu().tolist(),
                         'predicted_N':int(results[idx]['pred_seq_len'])}
+                if 'event_set_predictions' in out_json:
+                    context=output['event_set']
+                    quality=context['quality_logits'][idx].float().sigmoid().cpu().tolist()
+                    probabilities=context['relation_logits'][idx].float().softmax(-1)
+                    duplicate=probabilities[...,4]
+                    duplicate=(duplicate+duplicate.transpose(-1,-2))/2
+                    for row in batch_json[video_name]:
+                        row['event_quality']=quality[row['query_id']]
+                    out_json['event_set_predictions'][video_name]={
+                        'relation_names':['separate','overlap','contains','inside','duplicate'],
+                        'duplicate_probs':np.round(duplicate.cpu().numpy(),5).tolist(),
+                        'relation_labels':probabilities.argmax(-1).cpu().tolist()}
                 if results_g:
                     collect_grounding_result(idx, video_name, opt, dt, batch_json_g, results_g)
                 if aux_results_g:
@@ -274,7 +303,8 @@ def evaluate(model,memory_bank,criterion,contrastive_criterion, postprocessors, 
 
     if opt.count_loss_coef > 0:
         metric_json_path = reranking(raw_dvc_json_path, alpha=alpha, cl_score_weight=opt.eval_matching_score_weight, temperature=2.0,
-            method=opt.eval_selection_method,sigma=opt.eval_softnms_sigma)
+            method=opt.eval_selection_method,sigma=opt.eval_softnms_sigma,
+            event_set_settings=getattr(opt,'event_set_selection_settings',None))
     else:
         raise ValueError('C2 Soft-NMS requires positive count_loss_coef and predicted event counts')
     save_dvc_json(out_json_g, dvc_json_path + '.grounding.json')

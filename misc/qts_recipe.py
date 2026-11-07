@@ -2,7 +2,7 @@
 import math
 
 BASE_COMMIT='4ce76e9'
-VARIANTS={'baseline':(False,0.,0.),'refine':(True,0.,1.),'support':(True,1.,1.)}
+VARIANTS={'baseline':(False,0.,0.),'refine':(True,0.,1.),'support':(True,1.,1.),'set':(True,1.,1.)}
 
 
 def dataset_settings(dataset):
@@ -19,7 +19,15 @@ def validate_qts(config):
     expected=dict(learned_proposal_mask=True,proposal_mask_loss_coef=0.,add_cross_attention=True,
         query_temporal_support=enabled,temporal_support_loss_coef=support,temporal_refine_loss_coef=refine,
         temporal_support_dim=128,temporal_support_max_delta=2.,full_event_supervision=True,
-        count_loss_coef=1.,counter_prior_source='train_full',eval_selection_method='softnms',eval_softnms_sigma=.5)
+        count_loss_coef=1.,counter_prior_source='train_full',
+        eval_selection_method='event_set' if variant=='set' else 'softnms',eval_softnms_sigma=.5)
+    if variant=='set':
+        from misc.event_set_selection import DEFAULTS
+        expected.update(relation_aware_event_set=True,event_set_dim=128,event_set_quality_coef=.5,
+                        event_set_relation_coef=.2,event_set_count_ordinal_coef=.2,
+                        event_set_input_grad=False,event_set_selection_settings=DEFAULTS)
+    elif config.get('relation_aware_event_set', False):
+        raise ValueError('Relation/quality heads belong to the set variant only')
     for k,v in expected.items():
         if config.get(k)!=v:raise ValueError(f'QTS requires {k}={v!r}, got {config.get(k)!r}')
     if any(config.get(k,False) for k in RETIRED_ENABLED) or config.get('dedup_loss_coef',0)!=0:

@@ -14,7 +14,7 @@ from transformers.caption_targets import prepare_legacy_caption_targets
 from ddvc.temporal_pooling import pool_temporal_segments
 
 
-def main(qts=False):
+def main(qts=False, event_set=False):
     torch.set_num_threads(2)
     torch.manual_seed(777)
     root = Path(__file__).resolve().parent
@@ -120,6 +120,9 @@ def main(qts=False):
         from ddvc.temporal_support import QueryTemporalSupport
         model.temporal_support=QueryTemporalSupport(query_dim=8,feature_dim=768,hidden_dim=16)
         with torch.no_grad():model.temporal_support.refiner[-1].bias.fill_(.2)
+    if event_set:
+        from ddvc.event_set import EventSetHeads
+        model.event_set_heads=EventSetHeads(8,768,16)
     q=3
     dt=dict(cap_tensor=labels,cap_mask=torch.ones_like(labels),gt_boxes_mask=torch.ones(1,2,dtype=torch.bool),
             video_tensor=video.detach(),video_mask=valid,gt_timestamp=[[[0,2],[4,7]]],
@@ -139,6 +142,9 @@ def main(qts=False):
                 from ddvc.temporal_support import temporal_support_objective
                 loss.update(temporal_support_objective(out['temporal_support'],targets,pairs))
                 torch.testing.assert_close(out['pred_boxes'],out['temporal_support']['pred_boxes'])
+            if 'event_set' in out:
+                from ddvc.event_set import event_set_objective
+                loss.update(event_set_objective(out['event_set'],targets,pairs,out['pred_count']))
             return loss,[pairs],[[pairs]]
     model.train()
     output,losses=model.parallel_prediction_matched(dt,Criterion(),None,h,hc,None,init,inter,others,False)
@@ -152,6 +158,10 @@ def main(qts=False):
         assert model.temporal_support.frame_proj[0].weight.grad.abs().sum()>0
         assert model.temporal_support.refiner[-1].weight.grad.abs().sum()>0
         assert 'loss_temporal_support' in losses and 'loss_temporal_refine' in losses
+    if event_set:
+        assert {'loss_event_quality','loss_event_relation','loss_count_ordinal'} <= set(losses)
+        assert model.event_set_heads.quality[-1].weight.grad.abs().sum()>0
+        assert model.event_set_heads.relation[-1].weight.grad.abs().sum()>0
     # Actual all-pair matcher code: confidence and reference must follow pair IDs.
     pair_ids=torch.tensor([2,2,0,0,1,1]);captions=torch.tensor([0,1,0,1,0,1])
     assert torch.equal(pm.proposal_confidence(context,pair_ids),pm.proposal_confidence(context)[pair_ids])
@@ -171,6 +181,10 @@ def main(qts=False):
     if qts:
         assert predicted['temporal_support']['weights'].shape==(1,q,10)
         print('PASS QTS: refined boxes feed matcher costs, caption CE, generation and registered trainable support/refiner paths')
+    if event_set:
+        assert predicted['event_set']['relation_logits'].shape==(1,q,q,5)
+        assert 'synthetic_duplicate_logits' not in predicted['event_set']
+        print('PASS EVENT SET: real matched/full DDVC paths, both head gradients, ordinal count objective and GT-free eval outputs')
     print('PASS: actual DDVC full prediction method generates all query captions with aligned layer contexts')
     saved=copy.deepcopy(head.state_dict())
     head.load_state_dict(saved)
@@ -179,5 +193,5 @@ def main(qts=False):
 
 if __name__=='__main__':
     import argparse
-    parser=argparse.ArgumentParser();parser.add_argument('--qts',action='store_true')
-    main(parser.parse_args().qts)
+    parser=argparse.ArgumentParser();parser.add_argument('--qts',action='store_true');parser.add_argument('--event-set',action='store_true')
+    args=parser.parse_args();main(args.qts,args.event_set)

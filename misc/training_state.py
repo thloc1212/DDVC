@@ -106,7 +106,10 @@ def validate_resume(config, previous):
             'gt_proposal_sample_num', 'full_event_supervision', 'counter_class_rates',
             'counter_prior_source', 'query_temporal_support', 'qts_variant',
             'temporal_support_dim', 'temporal_support_max_delta',
-            'temporal_support_loss_coef', 'temporal_refine_loss_coef')
+            'temporal_support_loss_coef', 'temporal_refine_loss_coef',
+            'relation_aware_event_set','event_set_dim','event_set_quality_coef',
+            'event_set_relation_coef','event_set_count_ordinal_coef','event_set_input_grad',
+            'event_set_selection_settings')
     changed = [k for k in keys if k in previous and config.get(k) != previous[k]]
     if changed:
         raise ValueError('Resume recipe differs for: ' + ', '.join(changed) + '. Start a new run instead.')

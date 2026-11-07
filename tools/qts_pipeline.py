@@ -45,11 +45,11 @@ def epochs(dataset):
     return dataset_settings(dataset)['epoch']
 
 
-def run_name(dataset, variant='support'):
+def run_name(dataset, variant='set'):
     return f'{dataset}_qts_{variant}_e{epochs(dataset)}_b1'
 
 
-def config_path(work, dataset, variant='support'):
+def config_path(work, dataset, variant='set'):
     return Path(work)/'prepared'/run_name(dataset,variant)/'config.yml'
 
 
@@ -88,7 +88,7 @@ def ensure_assets(args):
     return path
 
 
-def make_config(base, work, dataset, variant='support'):
+def make_config(base, work, dataset, variant='set'):
     enabled,support_coef,refine_coef=VARIANTS[variant]
     cfg=clean_legacy_metadata(base)
     name=run_name(dataset,variant)
@@ -98,6 +98,12 @@ def make_config(base, work, dataset, variant='support'):
         temporal_refine_loss_coef=refine_coef,temporal_support_dim=128,temporal_support_max_delta=2.,
         full_event_supervision=True,count_loss_coef=1.,counter_prior_source='train_full',
         eval_selection_method='softnms',eval_softnms_sigma=.5)
+    cfg['relation_aware_event_set'] = variant=='set'
+    if variant=='set':
+        from misc.event_set_selection import DEFAULTS
+        cfg.update(event_set_dim=128,event_set_quality_coef=.5,event_set_relation_coef=.2,
+                   event_set_count_ordinal_coef=.2,event_set_input_grad=False,
+                   event_set_selection_settings=dict(DEFAULTS),eval_selection_method='event_set')
     train=json.loads(Path(base['train_caption_file']).read_text(encoding='utf8'))
     counts=[len(v['timestamps']) for v in train.values()]
     if not counts or min(counts)<1 or max(counts)>min(cfg['num_queries'],cfg['max_eseq_length'],cfg['gt_proposal_sample_num']):
@@ -106,7 +112,7 @@ def make_config(base, work, dataset, variant='support'):
     cfg.update(id=name,exp_name=name,fixed_run_id=True,cfg_path='',save_dir=str(Path(work)/'runs'),
                epoch=epochs(dataset),start_from='',start_from_mode='last',pretrain=None,
                only_ft_captioner=False,only_ft_class_head=False,training_scheme='all',
-               experiment_recipe='query_temporal_support',selection_experiment='softnms',
+               experiment_recipe='query_temporal_support',selection_experiment=cfg['eval_selection_method'],
                min_epoch_when_save=0,save_checkpoint_every=1,save_all_checkpoint=False)
     cfg.pop('current_lr',None)
     validate_qts(cfg)
@@ -166,9 +172,9 @@ def prepare(args):
     shared.update(str(p) for p in (target/'bank').rglob('*.npy'))
     manifest=dict(expected_config=cfg,source_config=str(source),source_sha256=sha(source),
                   source_commit=helper('molab_pipeline').revision(),ablation_base_commit=BASE_COMMIT,
-                  dataset=args.dataset,case='QTS',variant=args.variant,input_sha256=inputs,
+                  dataset=args.dataset,case='QTS_EVENT_SET' if args.variant=='set' else 'QTS',variant=args.variant,input_sha256=inputs,
                   shared_file_sha256={p:sha(p) for p in sorted(shared)},
-                  note='C1 + temporal support, full GT supervision, expanded count/query budget; fresh model and optimizer.')
+                  note='C1 + temporal support; set variant adds quality/relation heads, ordinal count loss and joint selection. Full GT, fresh model and optimizer.')
     dump(target/'qts_manifest.json',manifest)
     path.write_text(yaml.safe_dump(cfg,sort_keys=False),encoding='utf8')
     make_smoke(cfg,target);check(path)
@@ -213,7 +219,8 @@ def check(path, require_features=True):
     if require_features:
         for p in cfg['visual_feature_folder']:
             if not Path(p).is_file():raise FileNotFoundError(p)
-    print('QTS_OK',ds,len(train),'train',len(val),'val;',cfg['epoch'],'epochs; variant',cfg['qts_variant'],'; mask loss 0; count loss 1; Soft-NMS only',flush=True)
+    print('QTS_OK',ds,len(train),'train',len(val),'val;',cfg['epoch'],'epochs; variant',cfg['qts_variant'],
+          '; mask loss 0; count loss 1; selection',cfg['eval_selection_method'],flush=True)
     return cfg
 
 
@@ -221,7 +228,8 @@ def fingerprint(path):
     files=[Path(path)]+[ROOT/p for p in ('train.py','opts.py','eval_utils_clip.py','misc/qts_recipe.py','ddvc/temporal_support.py','ddvc/criterion.py','data/video_dataset.py',
            'ddvc/ddvc_ret_encdec_clip_capQ.py','ddvc/CaptioningHead/gpt2.py',
            'ddvc/CaptioningHead/proposal_mask.py','misc/proposal_selection.py',
-           'misc/gradient_guard.py','transformers/caption_targets.py','ddvc/temporal_pooling.py','tools/qts_pipeline.py')]
+           'misc/gradient_guard.py','transformers/caption_targets.py','ddvc/temporal_pooling.py','tools/qts_pipeline.py',
+           'ddvc/event_set.py','misc/event_set_selection.py')]
     return {str(p):sha(p) for p in files}
 
 
@@ -236,6 +244,9 @@ def logged(command, log, pid=None):
 
 def smoke(args):
     path=config_path(args.work,args.dataset,args.variant);cfg=check(path)
+    if args.variant=='set':
+        logged([sys.executable,'-u','smoke_test_event_set.py','--cuda'],
+               args.work/'logs'/(cfg['id']+'.heads_smoke.log'))
     command=[sys.executable,'-u','tools/molab_pipeline.py','smoke','--config',str(path.parent/'smoke/config.yml')]
     if getattr(args,'checkpoint',False):
         command=[sys.executable,'-u','tools/molab_pipeline.py','smoke','--config',str(path),
@@ -307,17 +318,48 @@ def export(args):
         for relative in tracked:
             p=ROOT/relative
             if p.is_file() and p.suffix in {'.py','.sh','.md','.txt','.json'}:z.write(p,'source/'+relative)
-        z.writestr('EXPORT_MANIFEST.json',json.dumps(dict(dataset=args.dataset,method='QTS',
+        z.writestr('EXPORT_MANIFEST.json',json.dumps(dict(dataset=args.dataset,method='QTS_EVENT_SET' if args.variant=='set' else 'QTS',
              source_commit=helper('molab_pipeline').revision(),checkpoint_weights=False)))
     print('ZIP_READY',target,flush=True)
 
 
+def compare(args):
+    """Three selectors on the identical best-epoch raw candidates; no model forward."""
+    path=config_path(args.work,args.dataset,args.variant);cfg=check(path,require_features=False)
+    if not cfg.get('relation_aware_event_set'):
+        raise ValueError('Comparison needs a trained set-variant checkpoint with saved head predictions')
+    run=Path(cfg['save_dir'])/cfg['id']
+    info=json.loads((run/'info.json').read_text(encoding='utf8'))
+    epoch=info['best']['epoch']
+    candidates=list((run/'prediction').glob(f'num*_epoch{epoch}.raw.json'))
+    if len(candidates)!=1:raise FileNotFoundError('Need exactly one raw file for the selected best epoch')
+    raw=candidates[0];original_hash=sha(raw)
+    from eval_utils_clip import reranking,eval_metrics,save_dvc_json
+    result_dir=run/'selection_comparison'/f'epoch{epoch}';result_dir.mkdir(parents=True,exist_ok=True)
+    summary=[]
+    for method in ('topk','softnms','event_set'):
+        selected=reranking(str(raw),alpha=cfg.get('ec_alpha',.3),cl_score_weight=0.,temperature=2.,
+                           method=method,sigma=.5,event_set_settings=cfg['event_set_selection_settings'])
+        scores=dict(eval_metrics(selected,gt_filenames=cfg['gt_file_for_eval'],
+                                para_gt_filenames=cfg['gt_file_for_para_eval']))
+        rows=json.loads(Path(selected).read_text(encoding='utf8'));rows.update(scores)
+        save_dvc_json(rows,str(result_dir/(method+'.json')))
+        summary.append(dict(selection=method,epoch=epoch,events=sum(map(len,rows['results'].values())),
+                            **{k:float(scores[k])*100 for k in METRICS}))
+    if sha(raw)!=original_hash:raise RuntimeError('Comparison modified its raw candidates')
+    columns=['selection','epoch','events',*METRICS]
+    report=result_dir/'summary.tsv'
+    report.write_text('\t'.join(columns)+'\n'+'\n'.join('\t'.join(str(row[k]) for k in columns) for row in summary)+'\n',encoding='utf8')
+    print(report.read_text(encoding='utf8'),flush=True)
+    print('SELECTION_COMPARISON_READY',report,flush=True)
+
+
 def main():
     parser=argparse.ArgumentParser(__doc__);sub=parser.add_subparsers(dest='command',required=True)
-    for name in ('prepare','train','smoke','report','export','restage'):
+    for name in ('prepare','train','smoke','report','export','restage','compare'):
         p=sub.add_parser(name);p.add_argument('--work',type=Path,required=True)
         p.add_argument('--dataset',choices=['yc2','anet'],required=True)
-        p.add_argument('--variant',choices=list(VARIANTS),default='support')
+        p.add_argument('--variant',choices=list(VARIANTS),default='set')
         if name=='prepare':p.add_argument('--source-config',type=Path)
         if name in ('prepare','restage'):p.add_argument('--features',type=Path)
         if name=='train':p.add_argument('--resume',action='store_true')
