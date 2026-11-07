@@ -12,3 +12,8 @@ ddvc/ops/build/
 runs/
 prepared/
 assets/
+.env
+*.env
+rclone.conf
+rclone.conf.*
+secrets/

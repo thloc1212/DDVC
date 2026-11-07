@@ -23,6 +23,9 @@ concept heads or deduplication loss. Seed777, batch1, accumulation1, FP32,
 TF32 off, Adam LR5e-5. New query/count dimensions require fresh training.
 
 Start here: [two-account Molab commands, architecture, ablations, outputs and Drive backup](docs/QUERY_TEMPORAL_SUPPORT_MOLAB.md).
+For terminal-only rclone runs with `KLTN_DRIVE_PRIVATE.env`, shared data cache and
+verified checkpoint recovery, use the [rclone two-account runbook](docs/QTS_RCLONE_TWO_ACCOUNTS.md)
+and `tools/qts_drive.sh`.
 Default launcher: `tools/qts_molab.sh`; variants: `baseline`, `refine`, `support`.
 Real-model GPU smoke is required before full train/resume. No new benchmark
 scores are claimed from CPU validation.
