@@ -163,6 +163,8 @@ def evaluate(model,memory_bank,criterion,contrastive_criterion, postprocessors, 
     aux_out_json_g = {'results': {}}
 
     opt = loader.dataset.opt
+    if getattr(opt,'full_event_supervision',False):
+        out_json['counter_predictions']={}
     
     loss_sum = OrderedDict()
     len_check=0
@@ -226,6 +228,19 @@ def evaluate(model,memory_bank,criterion,contrastive_criterion, postprocessors, 
                         'pred_event_count': results[idx]['pred_seq_len'].item(),
                     }
                     for pid in range(segment_num) if results[idx]['scores'][pid].item() > score_threshold and raw_boxes_mask[pid]]
+                if 'temporal_support' in output:
+                    context=output['temporal_support']
+                    for row in batch_json[video_name]:
+                        query=row['query_id'];center,width=context['coarse_boxes'][idx,query].detach().cpu().tolist()
+                        duration=float(dt['video_length'][idx,1])
+                        row['coarse_timestamp']=[max(0.,min(1.,center-width/2))*duration,
+                                                 max(0.,min(1.,center+width/2))*duration]
+                        valid=context['valid_frames'][idx]
+                        row['support_mean']=float(context['weights'][idx,query,valid].mean().detach())
+                if 'counter_predictions' in out_json:
+                    out_json['counter_predictions'][video_name]={
+                        'logits':output['pred_count'][idx].detach().float().cpu().tolist(),
+                        'predicted_N':int(results[idx]['pred_seq_len'])}
                 if results_g:
                     collect_grounding_result(idx, video_name, opt, dt, batch_json_g, results_g)
                 if aux_results_g:

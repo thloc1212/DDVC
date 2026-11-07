@@ -14,7 +14,7 @@ from transformers.caption_targets import prepare_legacy_caption_targets
 from ddvc.temporal_pooling import pool_temporal_segments
 
 
-def main():
+def main(qts=False):
     torch.set_num_threads(2)
     torch.manual_seed(777)
     root = Path(__file__).resolve().parent
@@ -116,6 +116,10 @@ def main():
     model.count_head=nn.ModuleList([nn.Linear(768,20),nn.Linear(768,20)])
     model.bbox_head=nn.ModuleList([nn.Linear(8,2),nn.Linear(8,2)])
     model.caption_head=nn.ModuleList([head,head])
+    if qts:
+        from ddvc.temporal_support import QueryTemporalSupport
+        model.temporal_support=QueryTemporalSupport(query_dim=8,feature_dim=768,hidden_dim=16)
+        with torch.no_grad():model.temporal_support.refiner[-1].bias.fill_(.2)
     q=3
     dt=dict(cap_tensor=labels,cap_mask=torch.ones_like(labels),gt_boxes_mask=torch.ones(1,2,dtype=torch.bool),
             video_tensor=video.detach(),video_mask=valid,gt_timestamp=[[[0,2],[4,7]]],
@@ -130,7 +134,12 @@ def main():
     class Criterion:
         def __call__(self,out,targets):
             assert out['caption_losses'].shape==(3,2) if 'caption_losses' in out else True
-            return {'loss_giou':out['pred_boxes'].sum()*0},[pairs],[[pairs]]
+            loss={'loss_giou':out['pred_boxes'].sum()*0}
+            if 'temporal_support' in out:
+                from ddvc.temporal_support import temporal_support_objective
+                loss.update(temporal_support_objective(out['temporal_support'],targets,pairs))
+                torch.testing.assert_close(out['pred_boxes'],out['temporal_support']['pred_boxes'])
+            return loss,[pairs],[[pairs]]
     model.train()
     output,losses=model.parallel_prediction_matched(dt,Criterion(),None,h,hc,None,init,inter,others,False)
     assert all(torch.isfinite(v).all() for v in losses.values())
@@ -139,6 +148,10 @@ def main():
     sum(v for k,v in losses.items() if k.startswith('loss_')).backward()
     assert hc.grad is not None and h.grad is not None
     assert head.proposal_mask.mask_model[-1].weight.grad is not None
+    if qts:
+        assert model.temporal_support.frame_proj[0].weight.grad.abs().sum()>0
+        assert model.temporal_support.refiner[-1].weight.grad.abs().sum()>0
+        assert 'loss_temporal_support' in losses and 'loss_temporal_refine' in losses
     # Actual all-pair matcher code: confidence and reference must follow pair IDs.
     pair_ids=torch.tensor([2,2,0,0,1,1]);captions=torch.tensor([0,1,0,1,0,1])
     assert torch.equal(pm.proposal_confidence(context,pair_ids),pm.proposal_confidence(context)[pair_ids])
@@ -155,10 +168,16 @@ def main():
         predicted,_=model.parallel_prediction_full(dt,Criterion(),None,h,hc,None,init,inter,others,False)
     assert predicted['seq'].shape[:2]==(1,q)
     assert predicted['pred_boxes'].shape==(1,q,2)
+    if qts:
+        assert predicted['temporal_support']['weights'].shape==(1,q,10)
+        print('PASS QTS: refined boxes feed matcher costs, caption CE, generation and registered trainable support/refiner paths')
     print('PASS: actual DDVC full prediction method generates all query captions with aligned layer contexts')
     saved=copy.deepcopy(head.state_dict())
     head.load_state_dict(saved)
     print('PASS: mask parameters are included in the caption-head checkpoint state')
 
 
-if __name__=='__main__':main()
+if __name__=='__main__':
+    import argparse
+    parser=argparse.ArgumentParser();parser.add_argument('--qts',action='store_true')
+    main(parser.parse_args().qts)

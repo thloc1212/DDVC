@@ -40,8 +40,8 @@ from misc.gradient_guard import clip_gradients_or_fail
 
 # global clip_gt
 def train(opt):
-    from misc.c2_recipe import validate_method
-    validate_method(vars(opt))
+    from misc.qts_recipe import validate_training_recipe
+    validate_training_recipe(vars(opt))
     set_seed(opt.seed)
     runtime=configure_runtime(opt)
     accumulation = getattr(opt, 'gradient_accumulation_steps', 1)

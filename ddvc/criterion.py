@@ -41,6 +41,15 @@ class SetCriterion(nn.Module):
        4.99550405e-04, 1.99820162e-04, 2.99730243e-04, 3.99640324e-04,
        2.99730243e-04, 0.00000000e+00, 1.99820162e-04, 0.00000000e+00,
        0.00000000e+00, 0.00000000e+00, 9.99100809e-05, 9.99100809e-05]
+        configured = getattr(opt, 'counter_class_rates', None)
+        if configured is not None:
+            if len(configured) != opt.max_eseq_length + 1:
+                raise ValueError('Counter class-rate vector does not match count head')
+            if not all(0 <= x <= 1 for x in configured) or abs(sum(configured)-1) > 1e-6:
+                raise ValueError('Invalid counter class rates')
+            counter_class_rate = configured
+        elif getattr(opt, 'max_eseq_length', 20) + 1 > len(counter_class_rate):
+            raise ValueError('Provide train-derived counter_class_rates for expanded count head')
         self.counter_class_rate = torch.tensor(counter_class_rate)
 
     def loss_labels(self, outputs, targets, indices, num_boxes, log=True):
@@ -178,6 +187,10 @@ class SetCriterion(nn.Module):
             kwargs = {}
             losses.update(self.get_loss(loss, outputs, targets, last_indices, num_boxes, **kwargs))
 
+        if 'temporal_support' in outputs:
+            from ddvc.temporal_support import temporal_support_objective
+            losses.update(temporal_support_objective(outputs['temporal_support'], targets, last_indices[0]))
+
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if 'aux_outputs' in outputs:
             aux_indices = []
@@ -292,6 +305,15 @@ class SetCriterion_cl(nn.Module):
        4.99550405e-04, 1.99820162e-04, 2.99730243e-04, 3.99640324e-04,
        2.99730243e-04, 0.00000000e+00, 1.99820162e-04, 0.00000000e+00,
        0.00000000e+00, 0.00000000e+00, 9.99100809e-05, 9.99100809e-05]
+        configured = getattr(opt, 'counter_class_rates', None)
+        if configured is not None:
+            if len(configured) != opt.max_eseq_length + 1:
+                raise ValueError('Counter class-rate vector does not match count head')
+            if not all(0 <= x <= 1 for x in configured) or abs(sum(configured)-1) > 1e-6:
+                raise ValueError('Invalid counter class rates')
+            counter_class_rate = configured
+        elif getattr(opt, 'max_eseq_length', 20) + 1 > len(counter_class_rate):
+            raise ValueError('Provide train-derived counter_class_rates for expanded count head')
         self.counter_class_rate = torch.tensor(counter_class_rate)
 
     def loss_labels(self, outputs, targets, indices, num_boxes, log=True):
@@ -436,6 +458,10 @@ class SetCriterion_cl(nn.Module):
             kwargs = {}
             losses.update(self.get_loss(loss, outputs, targets, last_indices, num_boxes, **kwargs))
 
+
+        if 'temporal_support' in outputs:
+            from ddvc.temporal_support import temporal_support_objective
+            losses.update(temporal_support_objective(outputs['temporal_support'], targets, last_indices[0]))
 
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if 'aux_outputs' in outputs:

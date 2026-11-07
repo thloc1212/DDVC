@@ -158,6 +158,15 @@ def smoke(args):
         total.backward()
         if any(not torch.isfinite(p.grad).all() for p in model.parameters() if p.grad is not None):
             raise RuntimeError('Non-finite smoke gradients')
+        if getattr(opt,'query_temporal_support',False):
+            if output['pred_count'].shape[-1]!=opt.max_eseq_length+1 or 'temporal_support' not in output:
+                raise RuntimeError('QTS/count integration missing from actual model')
+            if not any(p.grad is not None and bool(p.grad.abs().sum()>0) for p in model.temporal_support.parameters()):
+                raise RuntimeError('Temporal support has no training gradient')
+            print('QTS_GRADIENT_PASS', 'count_logits',output['pred_count'].shape[-1],
+                  'gt_events',len(dt['video_target'][0]['boxes']),
+                  'support_loss',float(loss['loss_temporal_support'].detach()),
+                  'refine_loss',float(loss['loss_temporal_refine'].detach()),flush=True)
         torch.cuda.synchronize();elapsed=time.perf_counter()-started
         if step:timings.append(elapsed)
         print('SMOKE_STEP',step,'loss',float(total.detach()),'seconds',elapsed,flush=True)

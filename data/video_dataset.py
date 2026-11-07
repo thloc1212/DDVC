@@ -252,9 +252,15 @@ class PropSeqDataset(EDVCdataset):
         action_labels = self.anno[key].get('action_labels', [0] * len(gt_timestamps))
         assert max(action_labels) <= self.opt.num_classes
 
-        gt_sample_num = len(gt_timestamps) if (
-                len(gt_timestamps) < self.gt_proposal_sample_num) else self.gt_proposal_sample_num
-        random_ids = np.random.choice(list(range(len(gt_timestamps))), gt_sample_num, replace=False)
+        if getattr(self.opt, 'full_event_supervision', False):
+            # Preserve every event and its caption for matching and count targets.
+            capacity = min(self.gt_proposal_sample_num, self.opt.num_queries, self.opt.max_eseq_length)
+            if len(gt_timestamps) > capacity:
+                raise ValueError(f'{key}: {len(gt_timestamps)} GT events exceed full-supervision capacity {capacity}')
+            random_ids = list(range(len(gt_timestamps)))
+        else:
+            gt_sample_num = min(len(gt_timestamps), self.gt_proposal_sample_num)
+            random_ids = np.random.choice(list(range(len(gt_timestamps))), gt_sample_num, replace=False)
 
         captions = [captions[_] for _ in range(len(captions)) if _ in random_ids]
         gt_timestamps = [gt_timestamps[_] for _ in range(len(gt_timestamps)) if _ in random_ids]

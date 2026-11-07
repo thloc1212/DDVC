@@ -79,9 +79,9 @@ def snapshot(model, optimizer, scheduler, epoch, iteration, info, config, phase,
 
 
 def validate_resume(config, previous):
-    from misc.c2_recipe import validate_method
-    validate_method(config)
-    validate_method(previous)
+    from misc.qts_recipe import validate_training_recipe
+    validate_training_recipe(config)
+    validate_training_recipe(previous)
     if config.get('gradient_accumulation_steps', 1) != previous.get('gradient_accumulation_steps', 1):
         raise ValueError('Resume effective batch changed; start a new run for a batch ablation.')
     for key,default in [('precision','fp32'),('allow_tf32',False),('nthreads',0),('pin_memory',False)]:
@@ -102,7 +102,11 @@ def validate_resume(config, previous):
             'learning_rate_decay_start', 'learning_rate_decay_every', 'learning_rate_decay_rate',
             'cl_schedule_time', 'cl_schedule_val', 'cls_loss_coef', 'giou_loss_coef',
             'bbox_loss_coef', 'count_loss_coef', 'caption_loss_coef', 'loss_caption_cl',
-            'contrastive_loss_coef', 'caption_cost_chunk_size')
+            'contrastive_loss_coef', 'caption_cost_chunk_size', 'max_eseq_length',
+            'gt_proposal_sample_num', 'full_event_supervision', 'counter_class_rates',
+            'counter_prior_source', 'query_temporal_support', 'qts_variant',
+            'temporal_support_dim', 'temporal_support_max_delta',
+            'temporal_support_loss_coef', 'temporal_refine_loss_coef')
     changed = [k for k in keys if k in previous and config.get(k) != previous[k]]
     if changed:
         raise ValueError('Resume recipe differs for: ' + ', '.join(changed) + '. Start a new run instead.')

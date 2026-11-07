@@ -238,6 +238,14 @@ class CM2(nn.Module):
         if self.disable_mid_caption_heads:
             print('only calculate caption loss in the last decoding layer')
 
+        self.temporal_support = None
+        if getattr(opt, 'query_temporal_support', False):
+            from ddvc.temporal_support import QueryTemporalSupport
+            with torch.random.fork_rng(devices=[]):
+                torch.default_generator.manual_seed(1733)
+                self.temporal_support = QueryTemporalSupport(hidden_dim,
+                    opt.feature_dim, opt.temporal_support_dim, opt.temporal_support_max_delta)
+
     def get_filter_rule_for_encoder(self):
         filter_rule = lambda x: 'input_proj' in x \
                                 or 'transformer.encoder' in x \
@@ -835,6 +843,7 @@ class CM2(nn.Module):
         cl_match_mats = []
         
 
+        support_context = None
         num_pred = hs.shape[0]
         for l_id in range(hs.shape[0]):
             if l_id == 0:
@@ -852,6 +861,9 @@ class CM2(nn.Module):
 
             # if self.opt.disable_mid_caption_heads and (l_id != hs.shape[0] - 1):
             outputs_coord = self.decode_event_boxes(tmp, reference, disable_iterative_refine)
+            if getattr(self, 'temporal_support', None) is not None and l_id == num_pred - 1:
+                support_context = self.temporal_support(hs_lid, dt['video_tensor'], outputs_coord, dt['video_mask'])
+                outputs_coord = support_context['pred_boxes']
             mask_others = mask_layer_context(others, outputs_class, reference, outputs_coord)
             if l_id != hs.shape[0] - 1:
                 cap_probs, seq = self.caption_prediction_eval(
@@ -881,6 +893,8 @@ class CM2(nn.Module):
                    'cl_match_mats': cl_match_mats}
 
         out = {k: v[-1] for k, v in all_out.items()}
+        if support_context is not None:
+            out['temporal_support'] = support_context
         if self.aux_loss:
             ks, vs = list(zip(*(all_out.items())))
             out['aux_outputs'] = [{ks[i]: vs[i][j] for i in range(len(ks))} for j in range(num_pred - 1)]
@@ -901,6 +915,7 @@ class CM2(nn.Module):
         outputs_cap_seqs = []
         cl_match_mats = []
 
+        support_context = None
         num_pred = hs.shape[0]
         for l_id in range(num_pred):
             hs_lid = hs[l_id]
@@ -921,6 +936,9 @@ class CM2(nn.Module):
             query_idxs=torch.arange(0, query_len).repeat_interleave(timestamp_len)
             seq_idxs = torch.arange(0, timestamp_len).repeat(query_len) # 包括 0 到 n 的整数
             outputs_coord = self.decode_event_boxes(tmp, reference, disable_iterative_refine)
+            if getattr(self, 'temporal_support', None) is not None and l_id == num_pred - 1:
+                support_context = self.temporal_support(hs_lid, dt['video_tensor'], outputs_coord, dt['video_mask'])
+                outputs_coord = support_context['pred_boxes']
             mask_others = mask_layer_context(others, outputs_class, reference, outputs_coord)
             with torch.no_grad():
                 cost_caption, loss_caption, cap_probs, seq = self.caption_prediction_no_grad(self.caption_head[l_id], dt, hs_lid_cap,
@@ -956,6 +974,8 @@ class CM2(nn.Module):
             'seq': outputs_cap_seqs,
             'cl_match_mats': cl_match_mats}
         out = {k: v[-1] for k, v in all_out.items()}
+        if support_context is not None:
+            out['temporal_support'] = support_context
 
         if self.aux_loss:
             ks, vs = list(zip(*(all_out.items())))
@@ -1554,6 +1574,9 @@ def build(args):
         weight_dict.update(aux_weight_dict)
     if getattr(args, 'learned_proposal_mask', False):
         weight_dict['loss_proposal_mask'] = args.proposal_mask_loss_coef
+    if getattr(args, 'query_temporal_support', False):
+        weight_dict['loss_temporal_support'] = args.temporal_support_loss_coef
+        weight_dict['loss_temporal_refine'] = args.temporal_refine_loss_coef
     losses = ['labels', 'boxes', 'cardinality']
 
     criterion = SetCriterion_cl(args.num_classes, matcher, weight_dict, losses, focal_alpha=args.focal_alpha,

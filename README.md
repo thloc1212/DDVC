@@ -1,23 +1,35 @@
-# DDVC — final C2
+# DDVC + Query-conditioned Temporal Support Learning
 
-Branch: [`final/c2-learned-mask`](https://github.com/thloc1212/DDVC/tree/final/c2-learned-mask).
+Branch: [`exp/query-temporal-support`](https://github.com/thloc1212/DDVC/tree/exp/query-temporal-support).
 
-Finalized method: DDVC + confidence-gated learned proposal mask + auxiliary
-mask BCE (weight **1.0**), followed by counter-guided Gaussian **Soft-NMS (sigma 0.5)**.
-Concept heads/loss/prefix (C3–C5), deduplication loss and merge are removed.
-The previous ablation implementation remains on
-[`exp/v1-v2-contribution-ablation`](https://github.com/thloc1212/DDVC/tree/exp/v1-v2-contribution-ablation).
-This is an experimental fork; the original project attribution is preserved below.
+New experiment based on C1: learned proposal mask, old mask loss **0.0**.
+A query-conditioned visual-support module refines final-layer intervals before
+caption generation and Hungarian matching. Matched GT intervals supervise an
+event-balanced support BCE and a continuous center/duration refinement L1.
+GPT-2 stays randomly initialized; CLIP input features remain frozen.
 
-- YouCook2: full feature-matched 1237 train / 436 val, **15 epochs, 50 queries**.
-- ActivityNet Captions: 10009 train / 4917 val, **8 epochs, 10 queries**.
-- Both: seed 777, batch 1, accumulation 1, FP32, TF32 off, Adam LR 5e-5.
-- GPT-2 is randomly initialized; pre-extracted CLIP features remain frozen.
-- C2 active-path model math and initialization are retained. No new scores are claimed.
+| Setting | YouCook2 | ActivityNet Captions |
+|---|---:|---:|
+| Epochs | 15 | **6** |
+| Queries | 50 | **30** |
+| GT budget | **20** | **30** |
+| Counter maximum / logits | 20 / 21 | **30 / 31** |
+| Count loss coefficient | **1.0** | **1.0** |
 
-Start here: [Molab commands, outputs, resume and Drive backup](docs/C2_FINAL_MOLAB.md).
-Architecture and source attribution: [Learned proposal mask](LEARNED_PROPOSAL_MASK.md).
-There is one current launcher: `tools/c2_molab.sh`; no C0–C5 queue or concept modes.
+All GT events/captions are retained, with explicit capacity checks. Counter
+class frequencies are derived from full training annotations only. Default
+selection remains counter-guided Gaussian Soft-NMS sigma .5; no merge,
+concept heads or deduplication loss. Seed777, batch1, accumulation1, FP32,
+TF32 off, Adam LR5e-5. New query/count dimensions require fresh training.
+
+Start here: [two-account Molab commands, architecture, ablations, outputs and Drive backup](docs/QUERY_TEMPORAL_SUPPORT_MOLAB.md).
+Default launcher: `tools/qts_molab.sh`; variants: `baseline`, `refine`, `support`.
+Real-model GPU smoke is required before full train/resume. No new benchmark
+scores are claimed from CPU validation.
+
+Previous finalized C2 stays on
+[`final/c2-learned-mask`](https://github.com/thloc1212/DDVC/tree/final/c2-learned-mask);
+[its historical runbook](docs/C2_FINAL_MOLAB.md) applies to that recipe.
 
 ## Original DDVC project
 
