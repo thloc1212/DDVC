@@ -650,7 +650,7 @@ def worker(args, drive):
                 command += ['--resume']
             # Source the CUDA environment set up by the original launcher in a child shell.
             import shlex
-            shell = 'set -e; export PYTHONPATH=' + shlex.quote(str(ROOT) + ':' + str(ROOT / 'ddvc/ops')) + ':"${PYTHONPATH:-}"; '
+            shell = 'set -e; export PYTHONPATH=' + shlex.quote(str(ROOT / 'tools') + ':' + str(ROOT) + ':' + str(ROOT / 'ddvc/ops')) + ':"${PYTHONPATH:-}"; '
             shell += 'export HF_HOME=' + shlex.quote(str(WORK / 'hf-cache')) + '; '
             shell += 'export PATH=' + shlex.quote(str(WORK / 'tools/java/bin')) + ':"$PATH"; '
             shell += 'if [ -f ' + shlex.quote(str(WORK / 'cuda130_env.sh')) + ' ]; then source ' + shlex.quote(str(WORK / 'cuda130_env.sh')) + '; fi; '

@@ -10,7 +10,7 @@ DATASET=${2:-yc2}
 case "$DATASET" in yc2) EPOCHS=15;; anet) EPOCHS=6;; *) echo 'Dataset must be yc2 or anet'; exit 2;; esac
 RUN=${DATASET}_c1_e${EPOCHS}_b1
 export CUDA_VISIBLE_DEVICES=${DDVC_GPU:-0} TOKENIZERS_PARALLELISM=false PYTHONUNBUFFERED=1 MPLBACKEND=Agg LC_ALL=C LANG=C
-export PYTHONPATH="$REPO:$REPO/ddvc/ops${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH="$REPO/tools:$REPO:$REPO/ddvc/ops${PYTHONPATH:+:$PYTHONPATH}"
 export HF_HOME=${DDVC_HF_HOME:-$WORK/hf-cache}
 export PATH="$WORK/tools/java/bin:$PATH"
 mkdir -p "$WORK/logs" "$WORK/prepared" "$WORK/runs" "$WORK/provenance"
@@ -28,6 +28,7 @@ case "$COMMAND" in
    logged tokenizer "$PY" tools/prepare_gpt2_tokenizer.py
    logged cpu_c1 "$PY" smoke_test_c1.py
    logged drive_tests "$PY" tools/test_c1_rclone.py
+   logged cli_imports "$PY" tools/test_c1_cli_imports.py
    logged caption_targets "$PY" smoke_test_caption_targets.py --gpt2
    logged java "$PY" -u tools/molab_pipeline.py java --target "$WORK/tools/java"
    if [[ $("$PY" -c 'import torch; print(torch.version.cuda)') == 13.0 ]]; then

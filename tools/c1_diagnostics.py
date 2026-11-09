@@ -15,6 +15,8 @@ from scipy.optimize import linear_sum_assignment
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
+sys.path.insert(0,str(Path(__file__).resolve().parent))
+import c1_pipeline as pipeline
 from misc.proposal_selection import select_proposals
 
 
@@ -54,7 +56,6 @@ def table(path,rows):
 
 
 def diagnose(work,dataset,score=False):
-    import c1_pipeline as pipeline
     cfg=pipeline.check(pipeline.config_path(work,dataset),require_features=False)
     run=Path(cfg['save_dir'])/cfg['id'];info=json.loads((run/'info.json').read_text(encoding='utf8'))
     epoch=info['best']['epoch'];pred=list((run/'prediction').glob(f'num*_epoch{epoch}.raw.json'))

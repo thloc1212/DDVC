@@ -4,7 +4,8 @@
 
 Nhánh GitHub: https://github.com/thloc1212/DDVC/tree/exp/c1-grounding-diagnostics
 
-Mốc mã cố định: `c1-diagnostics-20261109`.
+Mốc mã cố định cho run mới: `c1-diagnostics-20261109-importfix`.
+Mốc ban đầu `c1-diagnostics-20261109` giữ nguyên để restore các run đã chạy.
 
 Đây là **C1 đã có trong ablation**: DDVC + confidence-gated learned proposal mask,
 không auxiliary mask loss, dùng Gaussian Soft-NMS. Không có QTS, quality/relation
@@ -51,7 +52,7 @@ Chạy trên **cả hai tài khoản**:
 test -f /marimo/KLTN_DRIVE_PRIVATE.env
 command -v rclone
 git clone --single-branch --branch exp/c1-grounding-diagnostics https://github.com/thloc1212/DDVC.git /marimo/DDVC_C1/source
-git -C /marimo/DDVC_C1/source checkout --detach c1-diagnostics-20261109
+git -C /marimo/DDVC_C1/source checkout --detach c1-diagnostics-20261109-importfix
 LC_ALL=C LANG=C bash /marimo/DDVC_C1/source/tools/c1_drive.sh auth
 ```
 
@@ -130,6 +131,18 @@ LC_ALL=C LANG=C bash /marimo/DDVC_C1/source/tools/c1_drive.sh status anet
 Chạy dòng ứng với dataset của tài khoản đó.
 
 ## 6. Sau train — kiểm tra count và ranking, không train lại
+
+Nếu run đã train ở tag ban đầu và báo `No module named c1_pipeline` hoặc
+`c1_diagnostics`: giữ nguyên checkout để không đổi source commit của backup.
+Đợi lệnh backup hiện tại hoàn tất, rồi thêm đường dẫn tools trong terminal:
+
+```bash
+export PYTHONPATH="/marimo/DDVC_C1/source/tools:/marimo/DDVC_C1/source:/marimo/DDVC_C1/source/ddvc/ops${PYTHONPATH:+:$PYTHONPATH}"
+```
+
+Sau đó chạy lại các lệnh dưới đây. Không cần train lại; không đổi weights/config.
+Run mới ở tag `importfix` đã tự khai báo các đường dẫn này. Có regression test
+chạy CLI thật với Python safe-path và cwd khác thư mục repo.
 
 YC2:
 
