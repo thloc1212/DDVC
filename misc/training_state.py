@@ -79,7 +79,7 @@ def snapshot(model, optimizer, scheduler, epoch, iteration, info, config, phase,
 
 
 def validate_resume(config, previous):
-    from misc.c2_recipe import validate_method
+    from misc.c1_recipe import validate_training_method as validate_method
     validate_method(config)
     validate_method(previous)
     if config.get('gradient_accumulation_steps', 1) != previous.get('gradient_accumulation_steps', 1):

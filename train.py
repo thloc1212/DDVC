@@ -40,7 +40,7 @@ from misc.gradient_guard import clip_gradients_or_fail
 
 # global clip_gt
 def train(opt):
-    from misc.c2_recipe import validate_method
+    from misc.c1_recipe import validate_training_method as validate_method
     validate_method(vars(opt))
     set_seed(opt.seed)
     runtime=configure_runtime(opt)

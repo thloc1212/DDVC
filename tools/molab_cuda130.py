@@ -63,6 +63,13 @@ def main():
     if runtime_header_version(home/'include/cuda_runtime_api.h') != 13000:
         raise RuntimeError('Private runtime headers are not CUDA 13.0')
     nvcc = home/'bin/nvcc'
+    # Wheel/ZIP staging can lose executable bits on ephemeral Molab storage.
+    # Only repair regular compiler binaries within this private toolchain.
+    for folder in (home/'bin', home/'nvvm/bin'):
+        if folder.is_dir():
+            for binary in folder.iterdir():
+                if binary.is_file() and not binary.is_symlink():
+                    binary.chmod(binary.stat().st_mode | 0o111)
     cccl = home/'include/cccl'
     if not (cccl/'nv/target').is_file():
         raise FileNotFoundError(cccl/'nv/target')
