@@ -2,7 +2,7 @@
 
 Repo: https://github.com/thloc1212/DDVC/tree/exp/c1-frozen-reranker
 
-Tag cố định: `c1-frozen-rerank-20261109`
+Tag cố định: `c1-frozen-rerank-20261109-metricsfix`
 
 Session đích: `/marimo/DDVC_C1` đã train xong, còn checkpoint, data và môi trường GPU.
 
@@ -31,14 +31,14 @@ Dán lần lượt vào **terminal Molab**. Không dán vào cell Python.
 
 ```bash
 git clone --single-branch --branch exp/c1-frozen-reranker https://github.com/thloc1212/DDVC.git /marimo/DDVC_C1_Rerank/source
-git -C /marimo/DDVC_C1_Rerank/source checkout --detach c1-frozen-rerank-20261109
+git -C /marimo/DDVC_C1_Rerank/source checkout --detach c1-frozen-rerank-20261109-metricsfix
 ```
 
 Nếu thư mục source reranker đã tồn tại, thay hai lệnh trên bằng:
 
 ```bash
-git -C /marimo/DDVC_C1_Rerank/source fetch origin tag c1-frozen-rerank-20261109
-git -C /marimo/DDVC_C1_Rerank/source checkout --detach c1-frozen-rerank-20261109
+git -C /marimo/DDVC_C1_Rerank/source fetch origin tag c1-frozen-rerank-20261109-metricsfix
+git -C /marimo/DDVC_C1_Rerank/source checkout --detach c1-frozen-rerank-20261109-metricsfix
 ```
 
 Khởi chạy nền, rồi theo dõi log:
@@ -191,7 +191,7 @@ dataset/run ID riêng, không ghi đè nhau.
 
 ## 8. Kiểm chứng trước khi phát hành
 
-- 11 kiểm thử CPU: selector beta=0, target cùng GT, giới hạn fit/dev, feature pooling,
+- 12 kiểm thử CPU: selector beta=0, target cùng GT, giới hạn fit/dev, feature pooling,
   gradient head, cache hash, head fit/resume, validation inference, import safe-path,
   backup hai slot và fallback khi corrupt.
 - Đối chiếu raw/final YC2 epoch 11 có sẵn: beta=0 chọn đúng toàn bộ 436 video,
@@ -200,3 +200,29 @@ dataset/run ID riêng, không ghi đè nhau.
 - Kiểm thử scorer trong integration test là giả lập; chưa chạy GPU/official scorer
   tại máy local. Molab sẽ chạy real-model GPU smoke và scorer chính thức trước khi
   công bố summary. Không có số cải thiện reranker nào được khẳng định trước lần chạy đó.
+
+## 9. Sửa lỗi `KeyError: CIDEr` của bản phát hành đầu
+
+Trong evaluator DDVC vendored, `infer_mode=False` chỉ bật METEOR cho event
+captioning; `infer_mode=True` mới bật CIDEr, BLEU và ROUGE cùng METEOR.
+Đây là cờ chấm điểm, không thay chế độ sinh candidate hoặc huấn luyện model.
+Bản sửa bật đủ scorer 2018, kiểm tra metric đầy đủ/hữu hạn, thêm scoring protocol
+vào cache fingerprint và tự tính lại cache thiếu CIDEr/BLEU. Không điền metric 0 giả.
+
+Nếu run đã báo `FAILED_BACKED_UP` tại bước evaluation, giữ nguyên session/data,
+thoát tail bằng Ctrl+C rồi chạy:
+
+```bash
+git -C /marimo/DDVC_C1_Rerank/source fetch origin tag c1-frozen-rerank-20261109-metricsfix
+git -C /marimo/DDVC_C1_Rerank/source checkout --detach c1-frozen-rerank-20261109-metricsfix
+LC_ALL=C LANG=C bash /marimo/DDVC_C1_Rerank/source/tools/c1_rerank.sh start yc2 --resume
+tail -n 80 -F /marimo/DDVC_C1_Rerank/logs/yc2.rerank.log
+```
+
+Migration được cho phép chỉ từ commit phát hành đầu
+`d75fbe759654996d90bfac979b2a7f333bbd254f`, khi head đã đủ 20 epoch và beta
+đã chốt. Workflow kiểm tra signature và hash toàn bộ candidate cache trước khi
+ghi source history rồi chấm tiếp; không train lại head/DDVC và không chọn beta lại.
+Log có `EVALUATION_FIX_REUSE_COMPLETE_HEAD`, `EXTRACTION_ALREADY_COMPLETE`,
+`HEAD_AND_BETA_ALREADY_FROZEN`. Backup sau đó ghi commit sửa lỗi và source history.
+Các thay đổi source khác vẫn bị từ chối resume. Nếu dùng ANET, đổi `yc2` thành `anet`.

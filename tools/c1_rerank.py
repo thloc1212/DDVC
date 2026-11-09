@@ -19,6 +19,10 @@ sys.path.insert(0,str(ROOT));sys.path.insert(0,str(ROOT/'tools'))
 from reranking.cache import atomic_json,sha
 from reranking.pipeline import Workflow
 
+# This evaluation-only fix may reuse completed heads from the first release.
+# Training/data/feature signatures must still match exactly; all other revisions fail closed.
+EVALUATION_FIX_SOURCES={'d75fbe759654996d90bfac979b2a7f333bbd254f'}
+
 
 def revision():return subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
 def announce(*x):print(time.strftime('%Y-%m-%d %H:%M:%S'),*x,flush=True)
@@ -29,6 +33,25 @@ def pid_path(work,ds):return work/'logs'/(ds+'.rerank.pid')
 def worker_alive(work,ds):
     path=pid_path(work,ds)
     return alive(path.read_text().strip()) if path.is_file() else False
+
+
+def compatible_resume(state,current,workflow):
+    if state['base_work']!=str(workflow.base):raise ValueError('Resume base work changed')
+    if state['source_commit']==current:return state
+    if state['source_commit'] not in EVALUATION_FIX_SOURCES:raise ValueError('Resume source changed')
+    import torch
+    last=torch.load(workflow.folder/'head-last.pt',map_location='cpu',weights_only=False)
+    best=torch.load(workflow.folder/'head-best.pt',map_location='cpu',weights_only=False)
+    if (last.get('signature')!=workflow.sig or best.get('signature')!=workflow.sig
+            or last.get('next_epoch')!=20 or 'beta' not in best):
+        raise ValueError('Evaluation fix requires an already-completed head and frozen beta')
+    workflow.load('train');workflow.load('val')  # Hash-verified completed candidate cache, no regeneration.
+    updated=dict(state)
+    updated['source_history']=list(state.get('source_history',[]))+[
+        dict(source_commit=state['source_commit'],reason='completed-head evaluation-only full-metric fix')]
+    updated['source_commit']=current
+    announce('EVALUATION_FIX_REUSE_COMPLETE_HEAD',best['epoch'],'beta',best['beta'],'NO_TRAINING')
+    return updated
 
 
 def drive(args):
@@ -103,13 +126,13 @@ class Backup:
 def launch(args):
     import torch
     if not torch.cuda.is_available():raise RuntimeError('Use the existing GPU C1 session')
-    Workflow(args.work,args.base,args.dataset)  # Catch missing/mismatched C1 before backgrounding.
+    workflow=Workflow(args.work,args.base,args.dataset)  # Catch missing/mismatched C1 before backgrounding.
     path=state_path(args.work,args.dataset)
     if path.is_file():
         state=json.loads(path.read_text(encoding='utf8'))
         if worker_alive(args.work,args.dataset):raise RuntimeError('Reranker is already running; use logs')
         if not args.resume:raise FileExistsError('Run already exists; use start DATASET --resume')
-        if state['source_commit']!=revision() or state['base_work']!=str(args.base):raise ValueError('Resume source/base work changed')
+        state=compatible_resume(state,revision(),workflow)
     else:
         if args.resume:raise FileNotFoundError('Restore a reranker backup before resume')
         state=dict(dataset=args.dataset,work=str(args.work),base_work=str(args.base),source_commit=revision(),
@@ -179,7 +202,8 @@ def restore(args):
             meta=transport.read_json(remote+'/slot-'+str(slot)+'/READY.json');candidates.append((meta['created_ns'],slot,meta))
         except (RuntimeError,KeyError,ValueError):pass
     for _,slot,meta in sorted(candidates,reverse=True):
-        if meta['source_commit']!=revision() or meta['work']!=str(args.work) or meta['base_work']!=str(args.base):
+        if (meta['source_commit'] not in {revision(),*EVALUATION_FIX_SOURCES}
+                or meta['work']!=str(args.work) or meta['base_work']!=str(args.base)):
             raise ValueError('Restore needs the same reranker commit and base/work paths')
         if meta['dataset']!=args.dataset or meta['run_id']!=args.run_id:raise ValueError('Restore dataset/run mismatch')
         with tempfile.TemporaryDirectory(dir=args.work,prefix='.restore-') as temporary:

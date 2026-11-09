@@ -159,15 +159,47 @@ class CacheTests(unittest.TestCase):
                 def load(split):
                     self.assertEqual(split,'val');return [dict(video_id='val',rows=r,N=2,features=np.zeros((5,2312),np.float16))]
                 w.load=load
-                # Substitute only expensive official scorers, retaining real head inference/selection/file checks.
-                scorer=SimpleNamespace(eval_metrics=lambda *args:dict(scores))
+                # Mirror the real DDVC default: without infer_mode it returns METEOR only.
+                # Keep actual head inference, selection, score validation and cache checks.
+                calls=[]
+                def evaluate_metrics(*args,**kwargs):
+                    calls.append(kwargs)
+                    self.assertEqual(kwargs.get('dvc_eval_version'),'2018')
+                    return dict(scores) if kwargs.get('infer_mode') else {'METEOR':scores['METEOR']}
+                scorer=SimpleNamespace(eval_metrics=evaluate_metrics)
                 with patch.dict(sys.modules,{'eval_utils_clip':scorer}),patch('torch.cuda.is_available',return_value=False):w.evaluate()
+                self.assertEqual(len(calls),3);self.assertTrue(all(c['infer_mode'] for c in calls))
+                metric_file=w.folder/'evaluation/baseline_topk.metrics.json'
+                partial=json.loads(metric_file.read_text());partial['scores'].pop('CIDEr');atomic_json(metric_file,partial)
+                # Even a matching fingerprint must not make partial metrics reusable.
+                with patch.dict(sys.modules,{'eval_utils_clip':scorer}),patch('torch.cuda.is_available',return_value=False):w.evaluate()
+                self.assertEqual(len(calls),4)
+                self.assertIn('CIDEr',json.loads(metric_file.read_text())['scores'])
                 a=json.loads((w.folder/'evaluation/baseline_softnms.json').read_text())['results']
                 b=json.loads((w.folder/'evaluation/reranker_softnms.json').read_text())['results']
                 self.assertEqual([p['query_id'] for p in a['val']],[p['query_id'] for p in b['val']])
                 self.assertEqual(len(b['val']),2);self.assertEqual(headhash,sha(w.folder/'head-best.pt'))
                 self.assertTrue((w.folder/'evaluation/summary.tsv').is_file())
             finally:os.chdir(previous)
+
+    def test_completed_head_can_migrate_only_from_explicit_evaluation_fix_source(self):
+        from reranking.pipeline import atomic_torch
+        with tempfile.TemporaryDirectory() as temp:
+            folder=Path(temp);base=folder/'base';loaded=[]
+            workflow=SimpleNamespace(base=base,folder=folder,sig='same-training-signature',load=lambda split:loaded.append(split))
+            atomic_torch(folder/'head-last.pt',dict(signature=workflow.sig,next_epoch=20))
+            atomic_torch(folder/'head-best.pt',dict(signature=workflow.sig,beta=.5,epoch=11))
+            hashes=[sha(folder/name) for name in ('head-last.pt','head-best.pt')]
+            state=dict(base_work=str(base),source_commit=next(iter(runner.EVALUATION_FIX_SOURCES)))
+            updated=runner.compatible_resume(state,'fixed-commit',workflow)
+            self.assertEqual(updated['source_commit'],'fixed-commit');self.assertEqual(loaded,['train','val'])
+            self.assertEqual(state['source_commit'],updated['source_history'][0]['source_commit'])
+            self.assertEqual(hashes,[sha(folder/name) for name in ('head-last.pt','head-best.pt')])
+            with self.assertRaisesRegex(ValueError,'source changed'):
+                runner.compatible_resume(dict(state,source_commit='other-change'),'fixed-commit',workflow)
+            atomic_torch(folder/'head-last.pt',dict(signature=workflow.sig,next_epoch=19))
+            with self.assertRaisesRegex(ValueError,'already-completed'):
+                runner.compatible_resume(state,'fixed-commit',workflow)
 
 
 class BackupTests(unittest.TestCase):

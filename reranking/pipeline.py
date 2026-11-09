@@ -19,6 +19,12 @@ from .head import JointQualityHead,objective
 ROOT=Path(__file__).resolve().parents[1]
 BETAS=(0.,.25,.5,1.,2.)
 METRICS=('CIDEr','METEOR','Bleu_4','soda_c','Precision','Recall','MetaScore')
+SCORING_PROTOCOL='ddvc-2018-full-language-infer-mode-v1'
+
+
+def complete_scores(scores):
+    return isinstance(scores,dict) and all(
+        key in scores and isinstance(scores[key],(float,int)) and np.isfinite(scores[key]) for key in METRICS)
 
 
 def write_table(path,rows):
@@ -273,14 +279,21 @@ class Workflow:
         for mode,predictions in outputs.items():
             path=folder/(mode+'.json');atomic_json(path,dict(results=predictions,version='VERSION 1.0',external_data={},
                                                           selection=dict(method=mode,beta=beta if mode=='reranker_softnms' else 0)))
-            fingerprint=signature(dict(file=sha(path),refs=[sha(p) for p in self.cfg['gt_file_for_eval']+self.cfg['gt_file_for_para_eval']]))
+            fingerprint=signature(dict(file=sha(path),refs=[sha(p) for p in self.cfg['gt_file_for_eval']+self.cfg['gt_file_for_para_eval']],
+                                       scoring_protocol=SCORING_PROTOCOL))
             saved=folder/(mode+'.metrics.json');cached=json.loads(saved.read_text(encoding='utf8')) if saved.is_file() else {}
-            if cached.get('signature')==fingerprint:scores=cached['scores']
+            if cached.get('signature')==fingerprint and complete_scores(cached.get('scores')):scores=cached['scores']
             else:
                 print('OFFICIAL_SCORING',mode,flush=True)
                 with (folder/'scorer_detail.log').open('a',encoding='utf8') as log,contextlib.redirect_stdout(log),contextlib.redirect_stderr(log):
-                    scores={k:float(v)*100 for k,v in eval_metrics(str(path),self.cfg['gt_file_for_eval'],self.cfg['gt_file_for_para_eval']).items()}
-                atomic_json(saved,dict(signature=fingerprint,scores=scores))
+                    # In the vendored DDVC evaluator, infer_mode=True enables all
+                    # language scorers. False silently returns METEOR only.
+                    scores={k:float(v)*100 for k,v in eval_metrics(str(path),self.cfg['gt_file_for_eval'],
+                            self.cfg['gt_file_for_para_eval'],dvc_eval_version='2018',infer_mode=True).items()}
+                if not complete_scores(scores):
+                    raise RuntimeError('Incomplete/nonfinite official metrics: required='+str(METRICS)+
+                                       ' returned='+str(sorted(scores))+'; inspect '+str(folder/'scorer_detail.log'))
+                atomic_json(saved,dict(signature=fingerprint,scoring_protocol=SCORING_PROTOCOL,scores=scores))
             if mode=='baseline_softnms':
                 for k in METRICS:
                     if abs(scores[k]-100*final[k])>1e-4:raise ValueError('Stored C1 metric not reproduced: '+k)
