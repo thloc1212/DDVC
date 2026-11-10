@@ -15,7 +15,12 @@ def sha(path):
 
 def atomic_json(path,value):
     path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
-    temp=path.with_name(path.name+'.tmp');temp.write_text(json.dumps(value,ensure_ascii=False,indent=2),encoding='utf8')
+    # NumPy scalar promotion differs between NumPy 1.x/2.x. Convert only at
+    # the JSON boundary, preserving all selector arithmetic and ordering.
+    def scalar(item):
+        if isinstance(item,np.generic):return item.item()
+        raise TypeError('Object of type '+type(item).__name__+' is not JSON serializable')
+    temp=path.with_name(path.name+'.tmp');temp.write_text(json.dumps(value,ensure_ascii=False,indent=2,default=scalar),encoding='utf8')
     os.replace(temp,path)
 
 

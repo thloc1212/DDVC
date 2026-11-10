@@ -91,6 +91,23 @@ def fixture(root,queries=4,full_count=2):
 
 
 class CoreTests(unittest.TestCase):
+    def test_numpy_scalar_prediction_json_preserves_values_and_candidate_order(self):
+        _,rows,_,_=example();quality=np.array([.9,.8,.7,.6],dtype=np.float32)
+        result=select(rows,2,quality,1.)
+        # NumPy 2 can produce float32 here, while NumPy 1 promotes the same expression to float64.
+        for row in result:row['selection_score']=np.float32(row['selection_score'])
+        candidate_ids=[r['query_id'] for r in result]
+        payload=dict(results=result,count=np.int64(2),passed=np.bool_(True))
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/'predictions.json';atomic_json(path,payload);restored=json.loads(path.read_text())
+            self.assertEqual([r['query_id'] for r in restored['results']],candidate_ids)
+            self.assertEqual(restored['count'],2);self.assertIs(restored['passed'],True)
+            for a,b in zip(result,restored['results']):
+                self.assertEqual(a['selection_score'].item(),b['selection_score'])
+                self.assertEqual(a['timestamp'],b['timestamp']);self.assertEqual(a['sentence'],b['sentence'])
+            # Arrays/features must still be rejected rather than silently dumped into a huge JSON file.
+            with self.assertRaises(TypeError):atomic_json(Path(temp)/'bad.json',dict(features=np.zeros((2,3))))
+
     def test_same_gt_positive_distinct_overlapping_gt_negative(self):
         anno,rows,_,reward=example();labels,valid,hard=pair_targets(rows,anno,reward)
         self.assertTrue(valid[0,1]);self.assertEqual(labels[0,1],1.)
@@ -132,6 +149,30 @@ class CoreTests(unittest.TestCase):
 
 
 class IntegrationTests(unittest.TestCase):
+    def test_json_fix_migrates_completed_heads_without_updating_them_or_policy(self):
+        from reranking.pipeline import signature
+        with tempfile.TemporaryDirectory() as temp:
+            work=Path(temp);folder=work/'runs/yc2';folder.mkdir(parents=True)
+            manifest=dict(schema='test',input_receipt_sha256='same-input')
+            manifest['signature']=signature(manifest);atomic_json(folder/'manifest.json',manifest)
+            atomic_torch(folder/'heads-last.pt',dict(signature=manifest['signature'],next_epoch=20))
+            atomic_torch(folder/'relation-best.pt',dict(model=RelationHead().state_dict()))
+            atomic_torch(folder/'count-best.pt',dict(model=CountHead(4).state_dict()))
+            policy=dict(signature=manifest['signature'],relation_sha256=sha(folder/'relation-best.pt'),count_sha256=sha(folder/'count-best.pt'))
+            atomic_json(folder/'policy.json',policy)
+            files=['heads-last.pt','relation-best.pt','count-best.pt','policy.json']
+            before={n:sha(folder/n) for n in files}
+            state=dict(source_commit=next(iter(runner.JSON_FIX_SOURCES)),input_receipt_sha256='same-input')
+            updated=runner.compatible_resume(state,'serialization-fix',work,'yc2')
+            self.assertEqual(updated['source_commit'],'serialization-fix')
+            self.assertEqual(updated['source_history'][0]['source_commit'],state['source_commit'])
+            self.assertEqual(before,{n:sha(folder/n) for n in files})
+            with self.assertRaisesRegex(ValueError,'source changed'):
+                runner.compatible_resume(dict(state,source_commit='unrelated-change'),'serialization-fix',work,'yc2')
+            atomic_torch(folder/'heads-last.pt',dict(signature=manifest['signature'],next_epoch=19))
+            with self.assertRaisesRegex(ValueError,'completed unchanged'):
+                runner.compatible_resume(state,'serialization-fix',work,'yc2')
+
     @unittest.skipUnless(shutil.which('java'),'Java unavailable for actual vendored scorer smoke')
     def test_actual_official_scorer_includes_full_metrics_and_paragraph_protocol(self):
         with tempfile.TemporaryDirectory() as temp:

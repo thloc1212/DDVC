@@ -4,7 +4,7 @@ Ngày 10/11/2026. Branch: `exp/c1-relation-count`.
 
 Repo: https://github.com/thloc1212/DDVC/tree/exp/c1-relation-count
 
-Tag cố định: `c1-relation-count-20261110`.
+Tag cố định: `c1-relation-count-20261110-jsonfix`.
 
 ## Phạm vi
 
@@ -31,7 +31,7 @@ Dán từng khối vào **terminal**, không phải cell Python. Không cần kh
 
 ```bash
 git clone --single-branch --branch exp/c1-relation-count https://github.com/thloc1212/DDVC.git /marimo/DDVC_C1_Relation_Count/source
-git -C /marimo/DDVC_C1_Relation_Count/source checkout --detach c1-relation-count-20261110
+git -C /marimo/DDVC_C1_Relation_Count/source checkout --detach c1-relation-count-20261110-jsonfix
 ```
 
 ### 2. Chuẩn bị môi trường native
@@ -232,7 +232,7 @@ gọi là cùng mốc. C1 ablation ANET8epoch thuộc run khác.
 
 ## G. Kiểm chứng
 
-- 11 kiểm thử: same/different GT overlap; repeated caption ở event khác; ambiguous
+- 13 kiểm thử: same/different GT overlap; repeated caption ở event khác; ambiguous
   pairs; score âm; symmetry/permutation; full count14 vs cap10; input restore
   fallback/corruption/model-hash mismatch; train/dev isolation; fit/resume6ablation;
   head backup/restore; native scorer thực với Java và paragraph protocol.
@@ -243,3 +243,34 @@ gọi là cùng mốc. C1 ablation ANET8epoch thuộc run khác.
 
 Ý tưởng học suppression có liên quan [Learning Non-Maximum Suppression](https://openaccess.thecvf.com/content_cvpr_2017/html/Hosang_Learning_Non-Maximum_Suppression_CVPR_2017_paper.html).
 Đây là adaptation sang temporal-caption candidates, không tuyên bố learned NMS là ý tưởng mới.
+
+## H. Sửa lỗi ghi prediction `float32 is not JSON serializable`
+
+Một score ở selector Soft-NMS có thể là NumPy scalar, đặc biệt khi scalar promotion
+giữa các phiên bản NumPy khác nhau. Bản sửa chuyển NumPy scalar sang kiểu Python
+chỉ khi ghi JSON; không đổi phép tính, thứ tự ranking, loss, checkpoint hoặc policy.
+NumPy arrays/feature tensors vẫn bị từ chối thay vì tự dump vào JSON lớn.
+
+Nếu run đã train xong hai head và báo FAILED_BACKED_UP ở `experiment.evaluate()`,
+giữ nguyên local work và chạy:
+
+```bash
+git -C /marimo/DDVC_C1_Relation_Count/source fetch origin tag c1-relation-count-20261110-jsonfix
+git -C /marimo/DDVC_C1_Relation_Count/source checkout --detach c1-relation-count-20261110-jsonfix
+LC_ALL=C LANG=C bash /marimo/DDVC_C1_Relation_Count/source/tools/relation_count.sh start yc2 --resume
+tail -n 80 -F /marimo/DDVC_C1_Relation_Count/logs/yc2.relation_count.log
+```
+
+Migration chỉ được chấp nhận từ source đầu `46255740675ecf0869abb334e2cacddd53798245`,
+khi `heads-last.pt` đã đủ20epoch, input/manifest signature khớp và hash hai best-head
+khớp policy đã chốt. Source history được ghi lại. Không train lại hoặc chọn policy
+bằng validation. Log có:
+
+```text
+JSON_FIX_REUSE_COMPLETE_HEADS_AND_POLICY_NO_TRAINING
+RELATION_COUNT_ALREADY_FROZEN_NO_TRAINING
+OFFICIAL_SCORING ...
+```
+
+Backup cũ từ source đầu cũng khôi phục được bằng tag sửa này; kiểm điều kiện hoàn
+tất khi start --resume. Không cho phép resume tùy ý từ source không liên quan.

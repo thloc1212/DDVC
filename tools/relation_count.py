@@ -17,6 +17,8 @@ sys.path.insert(0,str(ROOT));sys.path.insert(0,str(ROOT/'tools'))
 from reranking.cache import atomic_json,sha
 from event_selection.storage import prepare,candidates,fetch,valid_id
 
+JSON_FIX_SOURCES={'46255740675ecf0869abb334e2cacddd53798245'}
+
 
 def revision():return subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
 def say(*args):print(time.strftime('%Y-%m-%d %H:%M:%S'),*args,flush=True)
@@ -38,6 +40,30 @@ def alive(work,ds):
         pid=int(pid_file(work,ds).read_text().strip());command=(Path('/proc')/str(pid)/'cmdline').read_bytes()
         return b'relation_count.py' in command and b'worker' in command
     except (OSError,ValueError):return False
+
+
+def compatible_resume(state,current,work,dataset):
+    if state['source_commit']==current:return state
+    if state['source_commit'] not in JSON_FIX_SOURCES:raise ValueError('Resume source changed')
+    import torch
+    from reranking.pipeline import signature
+    folder=work/'runs'/dataset
+    manifest=json.loads((folder/'manifest.json').read_text(encoding='utf8'))
+    policy=json.loads((folder/'policy.json').read_text(encoding='utf8'))
+    last=torch.load(folder/'heads-last.pt',map_location='cpu',weights_only=False)
+    sig=manifest['signature']
+    if (sig!=signature({k:v for k,v in manifest.items() if k!='signature'})
+            or last.get('signature')!=sig or policy.get('signature')!=sig or last.get('next_epoch')!=20
+            or sha(folder/'relation-best.pt')!=policy['relation_sha256']
+            or sha(folder/'count-best.pt')!=policy['count_sha256']
+            or manifest['input_receipt_sha256']!=state['input_receipt_sha256']):
+        raise ValueError('JSON fix requires completed unchanged heads, input signature and frozen policy')
+    result=dict(state)
+    result['source_history']=list(state.get('source_history',[]))+[
+        dict(source_commit=state['source_commit'],reason='JSON NumPy-scalar serialization fix; evaluation-only reuse')]
+    result['source_commit']=current
+    say('JSON_FIX_REUSE_COMPLETE_HEADS_AND_POLICY_NO_TRAINING')
+    return result
 
 
 class Recovery:
@@ -87,7 +113,8 @@ def start(args):
     if path.is_file():
         if not args.resume:raise FileExistsError('Existing experiment: use start DATASET --resume')
         state=json.loads(path.read_text())
-        if state['source_commit']!=revision() or state['input_receipt_sha256']!=sha(receipt_path):raise ValueError('Resume source/input identity changed')
+        if state['input_receipt_sha256']!=sha(receipt_path):raise ValueError('Resume input identity changed')
+        state=compatible_resume(state,revision(),args.work,args.dataset)
     else:
         if args.resume:raise FileNotFoundError('Restore a saved relation/count run before resume')
         state=dict(dataset=args.dataset,run_id=time.strftime('%Y%m%dT%H%M%SZ',time.gmtime())+'_'+uuid.uuid4().hex[:12],
@@ -139,7 +166,8 @@ def restore(args):
     if path.exists():raise FileExistsError('Restore needs a fresh work root without existing experiment state')
     remote=drive.path('runs/ddvc_c1_relation_count/'+args.dataset+'/'+args.run_id+'/recovery')
     for _,source,meta in candidates(drive,remote):
-        if meta.get('source_commit')!=revision() or meta.get('work')!=str(args.work) or meta.get('dataset')!=args.dataset or meta.get('run_id')!=args.run_id:
+        if (meta.get('source_commit') not in {revision(),*JSON_FIX_SOURCES} or meta.get('work')!=str(args.work)
+                or meta.get('dataset')!=args.dataset or meta.get('run_id')!=args.run_id):
             raise ValueError('Restore needs the same commit/work/dataset/run')
         with tempfile.TemporaryDirectory(dir=args.work,prefix='.relation-restore-') as temp:
             staged=Path(temp)
