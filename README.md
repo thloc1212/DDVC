@@ -1,23 +1,23 @@
-# DDVC — final C2
+# Frozen C1 — learned event relations and count calibration
 
-Branch: [`final/c2-learned-mask`](https://github.com/thloc1212/DDVC/tree/final/c2-learned-mask).
+Branch: [`exp/c1-relation-count`](https://github.com/thloc1212/DDVC/tree/exp/c1-relation-count).
 
-Finalized method: DDVC + confidence-gated learned proposal mask + auxiliary
-mask BCE (weight **1.0**), followed by counter-guided Gaussian **Soft-NMS (sigma 0.5)**.
-Concept heads/loss/prefix (C3–C5), deduplication loss and merge are removed.
-The previous ablation implementation remains on
-[`exp/v1-v2-contribution-ablation`](https://github.com/thloc1212/DDVC/tree/exp/v1-v2-contribution-ablation).
-This is an experimental fork; the original project attribution is preserved below.
+**Start here: [fresh Molab session, restore, run, logs and Drive backup](C1_RELATION_COUNT_MOLAB.md).**
+The current launcher is `tools/relation_count.sh`. It restores cached candidate
+features and learns two small heads, without training or loading DDVC weights.
 
-- YouCook2: full feature-matched 1237 train / 436 val, **15 epochs, 50 queries**.
-- ActivityNet Captions: 10009 train / 4917 val, **8 epochs, 10 queries**.
-- Both: seed 777, batch 1, accumulation 1, FP32, TF32 off, Adam LR 5e-5.
-- GPT-2 is randomly initialized; pre-extracted CLIP features remain frozen.
-- C2 active-path model math and initialization are retained. No new scores are claimed.
+- Relation head learns same-event duplication vs distinct overlapping GT events.
+- Count head learns full annotated TRAIN counts before caption subsampling.
+- Six paired selection/count ablations keep each candidate caption and interval fixed.
+- Base C1: learned mask, auxiliary mask loss **0**, no concepts/QTS/merge.
+- Source YC2 checkpoint is the **09/11 rerun (CIDEr37.8991)**, with frozen quality
+  reranker **39.5025**. These are not the old C1 ablation39.8365 or historical Ours40.0358.
+- New heads run20epochs on cached features; base DDVC/GPT-2/CLIP are unchanged.
+- Select all new policies using TRAIN head-dev only, then evaluate DVC validation.
 
-Start here: [Molab commands, outputs, resume and Drive backup](docs/C2_FINAL_MOLAB.md).
-Architecture and source attribution: [Learned proposal mask](LEARNED_PROPOSAL_MASK.md).
-There is one current launcher: `tools/c2_molab.sh`; no C0–C5 queue or concept modes.
+No improvement for the new heads is claimed before the experiment is run.
+This is an experimental fork; original attribution and historical setup follow.
+For this branch on Molab use the current guide above, which preserves native GPU Torch.
 
 ## Original DDVC project
 
