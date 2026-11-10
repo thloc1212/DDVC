@@ -238,6 +238,9 @@ class CM2(nn.Module):
         if self.disable_mid_caption_heads:
             print('only calculate caption loss in the last decoding layer')
 
+        from reranking.online import initialize
+        initialize(self, opt)
+
     def get_filter_rule_for_encoder(self):
         filter_rule = lambda x: 'input_proj' in x \
                                 or 'transformer.encoder' in x \
@@ -698,6 +701,10 @@ class CM2(nn.Module):
                 context = mask_layer_context(others, out['pred_logits'], last_reference, out['pred_boxes'])
                 loss.update(self.caption_head[-1].proposal_mask.objective(
                     out['pred_boxes'][0], dt['video_mask'], proposal_confidence(context), proposal_anchors(context)))
+            if getattr(self.opt, 'online_quality', False):
+                from reranking.online import augment
+                quality_reference = init_reference if hs.shape[0] == 1 else inter_references[hs.shape[0]-2]
+                loss.update(augment(self, dt, out, hs_cap[-1], quality_reference, others, eval_mode))
             return out, loss
         else:
             return memory
@@ -1554,6 +1561,8 @@ def build(args):
         weight_dict.update(aux_weight_dict)
     if getattr(args, 'learned_proposal_mask', False):
         weight_dict['loss_proposal_mask'] = args.proposal_mask_loss_coef
+    if getattr(args, 'online_quality', False):
+        weight_dict['loss_quality'] = args.quality_loss_coef
     losses = ['labels', 'boxes', 'cardinality']
 
     criterion = SetCriterion_cl(args.num_classes, matcher, weight_dict, losses, focal_alpha=args.focal_alpha,

@@ -25,6 +25,28 @@ ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT.parent
 DATA_PROTOCOL = 'c1-base-assets-v1'
 RUN_VARIANT = 'c1'
+ONLINE_QUALITY = os.environ.get('DDVC_RUN_VARIANT') == 'online_quality'
+QUALITY_MODE = os.environ.get('DDVC_QUALITY_MODE', 'joint')
+if ONLINE_QUALITY:
+    if QUALITY_MODE not in ('joint', 'detached'):raise ValueError('Invalid online quality mode')
+    RUN_VARIANT = 'online_quality_' + QUALITY_MODE
+    DATA_PROTOCOL = 'online-quality-base-assets-v1'
+
+
+def run_namespace():
+    return 'ddvc_online_quality/'+QUALITY_MODE if ONLINE_QUALITY else 'ddvc_c1'
+
+
+def pipeline_script():
+    return 'tools/online_quality_pipeline.py' if ONLINE_QUALITY else 'tools/c1_pipeline.py'
+
+
+def launcher_script():
+    return ROOT/('tools/online_quality_molab.sh' if ONLINE_QUALITY else 'tools/c1_molab.sh')
+
+
+def drive_stem(dataset):
+    return dataset+'.drive'+('.'+QUALITY_MODE if ONLINE_QUALITY else '')
 TEXT = {'.json', '.jsonl', '.yml', '.yaml', '.log', '.txt', '.tsv', '.csv'}
 
 
@@ -53,10 +75,14 @@ def revision():
 
 
 def run_name(dataset):
+    if ONLINE_QUALITY:
+        return dataset + '_online_quality_' + QUALITY_MODE + '_e' + ('15' if dataset == 'yc2' else '6') + '_b1'
     return dataset + '_c1_e' + ('15' if dataset == 'yc2' else '6') + '_b1'
 
 
 def session_path(dataset):
+    if ONLINE_QUALITY:
+        return WORK/'provenance'/('drive_session_'+dataset+'_'+RUN_VARIANT+'.json')
     return WORK / 'provenance' / ('drive_session_' + dataset + '.json')
 
 
@@ -202,7 +228,7 @@ class Drive:
     def initialize(self):
         parse_auth(Path(self.config).read_bytes(), self.remote)
         self.call('lsf', self.remote + ':', '--max-depth', '1', quiet=True)
-        for folder in ('bootstrap', 'code', 'data/yc2', 'data/anet', 'runs/ddvc_c1', 'logs'):
+        for folder in ('bootstrap', 'code', 'data/yc2', 'data/anet', 'runs/'+run_namespace(), 'logs'):
             self.call('mkdir', self.path(folder))
         announce('DRIVE_CONNECTED', self.path())
 
@@ -339,6 +365,9 @@ def pull_data(drive, dataset):
                 return True
             announce('LOCAL_BASE_DATA_NEEDS_PUBLISH', base)
             return False
+        if ONLINE_QUALITY:
+            from online_quality_pipeline import import_c1_data
+            if import_c1_data(drive, sys.modules[__name__], dataset):return True
         if import_qts_data(drive, dataset):
             # Keep one shared feature bundle on Drive; do not upload a duplicate.
             return True
@@ -414,7 +443,7 @@ def recovery_allowed(name, dataset):
 class Recovery:
     def __init__(self, drive, state):
         self.drive, self.state = drive, state
-        self.remote = drive.path('runs/ddvc_c1/' + state['dataset'] + '/' + state['run_id'])
+        self.remote = drive.path('runs/'+run_namespace()+'/' + state['dataset'] + '/' + state['run_id'])
         self.signature = None
         self.lock = threading.Lock()
 
@@ -434,6 +463,11 @@ class Recovery:
                 return False
             stat = last.stat()
             signature = (stat.st_mtime_ns, stat.st_size)
+            if ONLINE_QUALITY:
+                # After DDVC finishes, calibration shards/policy still advance.
+                artifacts=[p for p in (WORK/'runs'/run_name(dataset)/'quality_evaluation').rglob('*') if p.is_file()]
+                signature += (len(artifacts),max((p.stat().st_mtime_ns for p in artifacts),default=0),
+                              sum(p.stat().st_size for p in artifacts))
             if signature == self.signature and not force:
                 return False
             recovery = self.remote + '/recovery'
@@ -563,7 +597,8 @@ def launch(args):
             raise FileNotFoundError('Restore the run first, or start a fresh run without flags')
         state = dict(dataset=args.dataset, run_id=time.strftime('%Y%m%dT%H%M%SZ', time.gmtime()) + '_' + uuid.uuid4().hex[:12],
                      source_commit=revision(), work=str(WORK), remote=args.remote, root=args.root, variant=RUN_VARIANT)
-    if (state['source_commit'] != revision() or state['remote'] != args.remote or state['root'] != args.root):
+    if (state['source_commit'] != revision() or state['remote'] != args.remote or state['root'] != args.root
+            or state.get('variant','c1') != RUN_VARIANT):
         raise ValueError('Session source or Drive destination differs')
     run = WORK / 'runs' / name
     if args.resume:
@@ -579,14 +614,14 @@ def launch(args):
                '--remote', args.remote, '--root', args.root, 'worker', args.dataset]
     if args.resume:
         command += ['--resume']
-    with (logs / (args.dataset + '.drive.log')).open('a') as stream:
+    with (logs / (drive_stem(args.dataset) + '.log')).open('a') as stream:
         process = subprocess.Popen(command, cwd=ROOT, stdout=stream, stderr=subprocess.STDOUT,
                                    stdin=subprocess.DEVNULL, start_new_session=True)
     # Worker is the only writer after launch; separate PID avoids state races.
-    (logs / (args.dataset + '.drive.pid')).write_text(str(process.pid))
+    (logs / (drive_stem(args.dataset) + '.pid')).write_text(str(process.pid))
     announce('STARTED', args.dataset, 'PID', process.pid, 'run_id', state['run_id'])
-    announce('LOG', logs / (args.dataset + '.drive.log'))
-    announce('DRIVE_RUN', args.remote + ':' + args.root + '/runs/ddvc_c1/' + args.dataset + '/' + state['run_id'])
+    announce('LOG', logs / (drive_stem(args.dataset) + '.log'))
+    announce('DRIVE_RUN', args.remote + ':' + args.root + '/runs/'+run_namespace()+'/' + args.dataset + '/' + state['run_id'])
 
 
 def worker(args, drive):
@@ -617,7 +652,7 @@ def worker(args, drive):
             (WORK / 'provenance/rclone_version.txt').write_text(drive.call('version', quiet=True), encoding='utf8')
             thread = threading.Thread(target=monitor, daemon=True)
             thread.start()
-            launcher = str(ROOT / 'tools/c1_molab.sh')
+            launcher = str(launcher_script())
             if not (WORK / 'provenance/cuda_ready').is_file():
                 subprocess.run(['bash', launcher, 'setup'], cwd=ROOT, check=True)
             # Also stage tokenizer on retry/restore when CUDA setup was already done.
@@ -644,7 +679,7 @@ def worker(args, drive):
             state['status'] = 'TRAINING'
             write_json(state_file, state)
             drive.put_json(backup.remote + '/RUN_MANIFEST.json', state)
-            command = [sys.executable, '-u', 'tools/c1_pipeline.py', 'train', '--work', str(WORK),
+            command = [sys.executable, '-u', pipeline_script(), 'train', '--work', str(WORK),
                        '--dataset', args.dataset]
             if args.resume:
                 command += ['--resume']
@@ -657,6 +692,11 @@ def worker(args, drive):
             shell += 'exec ' + shlex.join(command)
             with (WORK / 'logs' / (run_name(args.dataset) + '.launch.log')).open('a') as stream:
                 subprocess.run(['bash', '-c', shell], cwd=ROOT, stdout=stream, stderr=subprocess.STDOUT, check=True)
+            if ONLINE_QUALITY:
+                state['status']='CALIBRATING_AND_EVALUATING';write_json(state_file,state)
+                with (WORK/'logs'/(run_name(args.dataset)+'.evaluation.log')).open('a') as stream:
+                    subprocess.run(['bash',launcher,'finalize',args.dataset],cwd=ROOT,
+                                   stdout=stream,stderr=subprocess.STDOUT,check=True)
             state['status'] = 'TRAIN_COMPLETE_BACKUP_PENDING'
             write_json(state_file, state)
         except BaseException:
@@ -709,7 +749,7 @@ def main():
     elif args.command == 'worker':
         worker(args, drive)
     elif args.command in ('diagnose','probe','export'):
-        launcher=str(ROOT/'tools/c1_molab.sh')
+        launcher=str(launcher_script())
         subprocess.run(['bash',launcher,args.command,args.dataset],cwd=ROOT,check=True)
     elif args.command == 'logs':
         logs = WORK / 'logs'
@@ -717,8 +757,11 @@ def main():
             raise FileNotFoundError('No run started here. First run: c1_drive.sh start ' + args.dataset)
         for suffix in ('.launch.log','.log'):
             (logs / (run_name(args.dataset)+suffix)).touch(exist_ok=True)
-        os.execvp('tail', ['tail', '-n', '50', '-F', str(logs / (args.dataset + '.drive.log')),
-                  str(logs / (run_name(args.dataset) + '.launch.log')), str(logs / (run_name(args.dataset) + '.log'))])
+        if ONLINE_QUALITY:
+            (logs/(run_name(args.dataset)+'.evaluation.log')).touch(exist_ok=True)
+        os.execvp('tail', ['tail', '-n', '50', '-F', str(logs / (drive_stem(args.dataset) + '.log')),
+                  str(logs / (run_name(args.dataset) + '.launch.log')), str(logs / (run_name(args.dataset) + '.log'))]
+                  +([str(logs/(run_name(args.dataset)+'.evaluation.log'))] if ONLINE_QUALITY else []))
     elif args.command == 'restore':
         if not re.fullmatch(r'[A-Za-z0-9_-]+', args.run_id):
             raise ValueError('Invalid run ID')
@@ -733,7 +776,7 @@ def main():
         if state['remote'] != args.remote or state['root'] != args.root:
             raise ValueError('Use the Drive destination recorded in the session state')
         if args.command == 'backup':
-            pid_file = WORK / 'logs' / (args.dataset + '.drive.pid')
+            pid_file = WORK / 'logs' / (drive_stem(args.dataset) + '.pid')
             if pid_file.exists() and alive(pid_file.read_text().strip()):
                 raise RuntimeError('Automatic backup worker is running; do not start a second writer')
             import fcntl

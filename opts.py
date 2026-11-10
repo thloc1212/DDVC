@@ -358,6 +358,14 @@ def parse_opts(argv=None, write_options=True):
     parser.add_argument('--min_crop_ratio', type=float, default=0.5)
     parser.add_argument('--crop_num', type=int, default=2)
 
+    # Online-quality ablation: disabled for historical C1/frozen workflows.
+    parser.add_argument('--online_quality', action='store_true')
+    parser.add_argument('--quality_gradient_mode', choices=['joint','detached'], default='joint')
+    parser.add_argument('--quality_loss_coef', type=float, default=.1)
+    parser.add_argument('--quality_head_lr', type=float, default=.001)
+    parser.add_argument('--quality_generation_chunk', type=int, default=8)
+    parser.add_argument('--quality_annotation_file', type=str, default='')
+
     # reranking
     parser.add_argument('--eval_selection_method', choices=['softnms'], default='softnms')
     parser.add_argument('--eval_softnms_sigma', type=float, default=.5)

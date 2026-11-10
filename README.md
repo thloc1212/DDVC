@@ -1,23 +1,27 @@
-# DDVC — final C2
+# DDVC C1 — online joint-quality training experiment
 
-Branch: [`final/c2-learned-mask`](https://github.com/thloc1212/DDVC/tree/final/c2-learned-mask).
+Branch: [`exp/c1-online-joint-quality`](https://github.com/thloc1212/DDVC/tree/exp/c1-online-joint-quality).
+Fixed tag: `online-quality-joint-20261110`.
 
-Finalized method: DDVC + confidence-gated learned proposal mask + auxiliary
-mask BCE (weight **1.0**), followed by counter-guided Gaussian **Soft-NMS (sigma 0.5)**.
-Concept heads/loss/prefix (C3–C5), deduplication loss and merge are removed.
-The previous ablation implementation remains on
-[`exp/v1-v2-contribution-ablation`](https://github.com/thloc1212/DDVC/tree/exp/v1-v2-contribution-ablation).
-This is an experimental fork; the original project attribution is preserved below.
+Train C1 and its 2312D-input quality scorer together from scratch, then calibrate
+beta on TRAIN head-dev and evaluate Top-N/Soft-NMS controls on identical saved
+validation candidates. The quality scorer retains the frozen-reranker architecture;
+it does not read cached candidates from an older C1 run or ground-truth captions.
 
-- YouCook2: full feature-matched 1237 train / 436 val, **15 epochs, 50 queries**.
-- ActivityNet Captions: 10009 train / 4917 val, **8 epochs, 10 queries**.
-- Both: seed 777, batch 1, accumulation 1, FP32, TF32 off, Adam LR 5e-5.
-- GPT-2 is randomly initialized; pre-extracted CLIP features remain frozen.
-- C2 active-path model math and initialization are retained. No new scores are claimed.
+- YouCook2: 1237 train /436 validation, **15 epochs, Q50**.
+- ActivityNet: 10009 train /4917 validation, **6 epochs, Q10**.
+- C1 learned proposal mask, **mask auxiliary loss0**, no concepts/relation/count
+  calibration/merge; seed777, batch1, accumulation1, FP32, TF32off.
+- C1 Adam LR5e-5; quality LR.001, loss weight.1. GPT-2 starts randomly.
+- `joint` mode sends quality gradients through confidence/duration/lexical
+  embeddings. `detached` is a separate fresh control for that feedback.
+- Generation and hard temporal membership remain discrete; no claim that
+  beam search or Soft-NMS is differentiable. No new full-run metric is claimed.
 
-Start here: [Molab commands, outputs, resume and Drive backup](docs/C2_FINAL_MOLAB.md).
-Architecture and source attribution: [Learned proposal mask](LEARNED_PROPOSAL_MASK.md).
-There is one current launcher: `tools/c2_molab.sh`; no C0–C5 queue or concept modes.
+**Start here: [two fresh Molab accounts, Drive cache/backup/resume and results](ONLINE_QUALITY_MOLAB.md).**
+Use `tools/online_quality_drive.sh`; older C1/C2/frozen-reranker guides are retained
+for provenance, not the launcher/config of this experiment.
+This is an experimental fork; original attribution follows.
 
 ## Original DDVC project
 

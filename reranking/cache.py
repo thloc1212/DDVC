@@ -13,9 +13,14 @@ def sha(path):
     return h.hexdigest()
 
 
+def _json_scalar(value):
+    if isinstance(value,np.generic):return value.item()
+    raise TypeError('Unsupported JSON value: '+type(value).__name__)
+
+
 def atomic_json(path,value):
     path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
-    temp=path.with_name(path.name+'.tmp');temp.write_text(json.dumps(value,ensure_ascii=False,indent=2),encoding='utf8')
+    temp=path.with_name(path.name+'.tmp');temp.write_text(json.dumps(value,ensure_ascii=False,indent=2,default=_json_scalar),encoding='utf8')
     os.replace(temp,path)
 
 
