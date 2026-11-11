@@ -1,7 +1,7 @@
 # DDVC global baseline + frozen quality: hai tài khoản Molab
 
 Branch: [`exp/baseline-frozen-quality`](https://github.com/thloc1212/DDVC/tree/exp/baseline-frozen-quality).
-Release cố định: [`baseline-frozen-quality-20261111`](https://github.com/thloc1212/DDVC/tree/baseline-frozen-quality-20261111).
+Release cố định: [`baseline-frozen-quality-20261111-smokefix`](https://github.com/thloc1212/DDVC/tree/baseline-frozen-quality-20261111-smokefix).
 
 Đây là đối chứng C0 **global visual attention** theo cùng recipe với thí nghiệm C1/frozen quality. Giữ DDVC, retrieval bank và GPT-2 khởi tạo ngẫu nhiên; **tắt learned proposal mask**, mask loss, concept, QTS, event-set, dedup loss và mọi merge. Đây là đối chứng trong code hiện tại, không khẳng định tái lập chính xác con số DDVC công bố.
 
@@ -30,6 +30,35 @@ Head và beta được chọn từ head-dev của TRAIN; VAL chỉ dùng chấm 
 
 **Không lấy lại quality head C1 đã train để gắn thẳng vào baseline**: candidate distribution và GPT-2 embedding khác, phải fit head mới. Kiến trúc/loss quality giữ nguyên; beta được chọn lại cho từng baseline/dataset. Quality + Top-N dùng cùng beta đã chọn cho Quality + Soft-NMS, không dò beta trên VAL.
 
+## Sửa lỗi smoke padding ở release đầu (chưa bắt đầu train)
+
+Nếu bị AssertionError tại `check_global_caption` trong setup: release đầu dùng phép so sánh toàn bộ logits FP32 với `atol=1e-6` khi đổi padding thành 1000. Log cũ không lưu mức lệch nên chưa xác định được nguyên nhân số học trên runtime đó. Bản sửa kiểm tra trực tiếp attention vào padding bằng 0, in mức lệch FP32 để chẩn đoán, và dùng FP64 chỉ cho phép thử padding invariance. Full training vẫn FP32; không thay mô hình/loss/lr/epoch.
+
+Trên account đã lỗi, thoát tail bằng Ctrl+C, rồi cập nhật:
+
+```bash
+git -C /marimo/DDVC_Baseline_Quality/source fetch origin tag baseline-frozen-quality-20261111-smokefix
+git -C /marimo/DDVC_Baseline_Quality/source checkout --detach baseline-frozen-quality-20261111-smokefix
+```
+
+Account YC2:
+
+```bash
+LC_ALL=C LANG=C bash /marimo/DDVC_Baseline_Quality/source/tools/baseline_quality.sh retry yc2
+LC_ALL=C LANG=C bash /marimo/DDVC_Baseline_Quality/source/tools/baseline_quality.sh logs yc2
+```
+
+Account ANET nếu cũng bị cùng lỗi:
+
+```bash
+LC_ALL=C LANG=C bash /marimo/DDVC_Baseline_Quality/source/tools/baseline_quality.sh retry anet
+LC_ALL=C LANG=C bash /marimo/DDVC_Baseline_Quality/source/tools/baseline_quality.sh logs anet
+```
+
+`retry` chỉ nhận setup thất bại trước CUDA readiness, chưa có folder train/checkpoint/head. Nó lưu lại state lỗi, ghi lịch sử source fix rồi chạy tiếp cả hai giai đoạn. Không xóa data, log hay credentials. Nếu account kia chưa khởi động run lần nào thì dùng `run anet` sau khi cập nhật, không dùng `retry`.
+
+Các mốc cần thấy: `PADDING_FP32_DIAGNOSTIC`, `PADDING_FP64_INVARIANCE_PASS`, rồi smoke mô hình thật và `EPOCH_START`. Nếu xuất hiện `Padding received cross-attention` hoặc `FP64 padding invariance failed`, giữ nguyên lỗi và gửi log; không bỏ qua kiểm tra.
+
 ## 1. Chuẩn bị cho cả hai tài khoản
 
 Chọn GPU trên Molab. Upload riêng file `KLTN_DRIVE_PRIVATE.env` vào `/marimo` trên **mỗi tài khoản**. File phải có remote đã xác thực `kltnbackup`; Drive API đã bật.
@@ -41,7 +70,7 @@ Trong terminal **của cả hai account**, chạy:
 ```bash
 test -f /marimo/KLTN_DRIVE_PRIVATE.env
 command -v rclone
-git clone --single-branch --branch baseline-frozen-quality-20261111 https://github.com/thloc1212/DDVC.git /marimo/DDVC_Baseline_Quality/source
+git clone --single-branch --branch baseline-frozen-quality-20261111-smokefix https://github.com/thloc1212/DDVC.git /marimo/DDVC_Baseline_Quality/source
 LC_ALL=C LANG=C bash /marimo/DDVC_Baseline_Quality/source/tools/baseline_quality.sh auth
 ```
 

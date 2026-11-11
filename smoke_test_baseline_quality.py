@@ -53,7 +53,7 @@ def check_global_caption():
     def config(**kw):
         return original_config(vocab_size=64,n_embd=768,n_head=12,n_layer=1,n_positions=32,
             bos_token_id=63,eos_token_id=63,pad_token_id=63,add_cross_attention=True,
-            resid_pdrop=0.,embd_pdrop=0.,attn_pdrop=0.)
+            resid_pdrop=0.,embd_pdrop=0.,attn_pdrop=0.,output_attentions=True)
     gpt2.GPT2Config,gpt2.GPT2Tokenizer=config,Tokenizer
     try:
         opt=SimpleNamespace(hidden_dim=512,device='cpu',gpt_layer=1,add_cross_attention=True,
@@ -78,10 +78,29 @@ def check_global_caption():
         out.loss.backward();assert h.grad is not None and h.grad.abs().sum()>0
         assert head.fc1.weight.grad.abs().sum()>0 and f.grad is None
         assert head.model.lm_head.weight.grad.abs().sum()>0
+        assert out.cross_attentions, 'Missing cross-attention evidence'
+        for attention in out.cross_attentions:
+            assert torch.isfinite(attention).all()
+            assert torch.count_nonzero(attention[...,~valid[0]])==0, 'Padding received cross-attention'
         mutated=f.detach().clone();mutated[:,-1]=1000
-        assert torch.allclose(out.logits.detach(),forward(mutated).logits.detach(),atol=1e-6)
-        mutated[:,0:6]=torch.randn_like(mutated[:,0:6])*3
-        assert not torch.allclose(out.logits.detach(),forward(mutated).logits.detach(),atol=1e-6)
+        # Report native FP32 behaviour; large padding sentinels can change CPU GEMM
+        # rounding/packing. Test semantic invariance in FP64, without changing training.
+        with torch.no_grad():
+            changed=forward(mutated)
+            for attention in changed.cross_attentions:
+                assert torch.count_nonzero(attention[...,~valid[0]])==0, 'Mutated padding received cross-attention'
+            delta=float((out.logits.detach()-changed.logits).abs().max())
+            print('PADDING_FP32_DIAGNOSTIC', 'torch',torch.__version__,'max_logit_delta',delta,
+                  'masked_attention_mass',0.,flush=True)
+            head.double();h=h.detach().double();reference=f.detach().double()
+            original=forward(reference).logits
+            changed=reference.clone();changed[:,-1]=1000
+            padded=forward(changed).logits
+            delta64=float((original-padded).abs().max())
+            assert torch.allclose(original,padded,rtol=1e-7,atol=1e-9), f'FP64 padding invariance failed: {delta64}'
+            changed[:,0:6]=torch.randn_like(changed[:,0:6])*3
+            assert not torch.allclose(original,forward(changed).logits,rtol=1e-7,atol=1e-9), 'Valid visual frames had no effect'
+            print('PADDING_FP64_INVARIANCE_PASS','max_logit_delta',delta64,flush=True)
         print('PASS actual GPT2 global forward/backward; original CLIP values, padding only, no mask parameters, shared initialization parity')
     finally:gpt2.GPT2Config,gpt2.GPT2Tokenizer=original_config,original_tokenizer
 

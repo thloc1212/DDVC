@@ -11,6 +11,45 @@ import baseline_quality_chain as chain
 
 
 class ChainTests(unittest.TestCase):
+    def setup_state(self,root,dataset='yc2'):
+        state=dict(dataset=dataset,work=str(root),variant='baseline_quality',status='FAILED_BACKUP_PENDING',
+                   source_commit=next(iter(chain.SETUP_FIX_SOURCES)),worker_pid=123)
+        path=root/'provenance'/('drive_session_'+dataset+'.json');path.parent.mkdir(parents=True,exist_ok=True)
+        path.write_text(json.dumps(state),encoding='utf8')
+        return path,state
+
+    def test_failed_setup_migration_preserves_evidence_without_changing_recipe(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);path,old=self.setup_state(root)
+            with patch.object(chain,'WORK',root),patch.object(chain,'alive',return_value=False):
+                chain.prepare_setup_retry('yc2','new-smoke-fix')
+            actual=json.loads(path.read_text())
+            self.assertEqual(actual['source_commit'],'new-smoke-fix')
+            self.assertEqual(actual['status'],'SETUP_RETRY_READY')
+            history=list((root/'provenance/setup_retry_history').glob('*.json'))
+            self.assertEqual(json.loads(history[0].read_text()),old)
+            self.assertFalse((root/'runs').exists())
+
+    def test_setup_retry_rejects_started_training_and_unapproved_sources(self):
+        for condition in ('run','cuda','quality','source','alive','status'):
+            with self.subTest(condition=condition),tempfile.TemporaryDirectory() as temp:
+                root=Path(temp);path,state=self.setup_state(root)
+                if condition=='run':(root/'runs/yc2_baseline_e15_b1').mkdir(parents=True)
+                if condition=='cuda':(root/'provenance/cuda_ready').touch()
+                if condition=='quality':
+                    p=root/'frozen_quality/provenance/rerank_yc2.json';p.parent.mkdir(parents=True);p.write_text('{}')
+                if condition=='source':state['source_commit']='unknown-source'
+                if condition=='status':state['status']='TRAINING'
+                path.write_text(json.dumps(state));before=path.read_bytes()
+                with patch.object(chain,'WORK',root),patch.object(chain,'alive',return_value=condition=='alive'):
+                    with self.assertRaises((ValueError,RuntimeError)):chain.prepare_setup_retry('yc2','new-smoke-fix')
+                self.assertEqual(path.read_bytes(),before)
+
+    def test_setup_retry_keeps_the_two_stage_chain(self):
+        with patch.object(chain.subprocess,'run') as run,patch.object(chain,'wait_stage',side_effect=RuntimeError('stop after launch')):
+            with self.assertRaises(RuntimeError):chain.worker('anet',retry=True)
+            self.assertEqual(run.call_args.args[0][-3:],['start','anet','--retry'])
+
     def test_wait_rejects_a_dead_worker_without_verified_completion(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);pid=root/'pid';pid.write_text('123');state=root/'state.json'

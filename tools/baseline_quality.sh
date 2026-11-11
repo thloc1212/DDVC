@@ -12,6 +12,7 @@ case "$DATASET" in yc2) EPOCHS=15;; anet) EPOCHS=6;; *) echo 'Use yc2 or anet'; 
 if [[ $# -ge 2 ]]; then shift 2; elif [[ $# -ge 1 ]]; then shift; fi
 case "$COMMAND" in
  run) exec "${DDVC_PYTHON:-/tmp/uv-venv/bin/python}" -u "$REPO/tools/baseline_quality_chain.py" start "$DATASET";;
+ retry) exec "${DDVC_PYTHON:-/tmp/uv-venv/bin/python}" -u "$REPO/tools/baseline_quality_chain.py" retry "$DATASET";;
  restore-data) exec "${DDVC_PYTHON:-/tmp/uv-venv/bin/python}" -u "$REPO/tools/baseline_stage_assets.py" "$DATASET";;
  auth) exec bash "$REPO/tools/c1_drive.sh" auth "$@";;
  start|status|backup|restore|export)
@@ -27,7 +28,7 @@ case "$COMMAND" in
      "$WORK/logs/${DATASET}_baseline_e${EPOCHS}_b1.log" \
      "$WORK/frozen_quality/logs/$DATASET.rerank.log";;
  results) exec cat "$WORK/frozen_quality/runs/$DATASET/evaluation/summary.tsv";;
- *) echo 'baseline_quality.sh auth | run|start|status|backup|restore|export DATASET [flags]'
+ *) echo 'baseline_quality.sh auth | run|retry|start|status|backup|restore|export DATASET [flags]'
     echo 'baseline_quality.sh quality|quality-status|quality-backup|quality-restore|quality-export|logs|results DATASET [flags]'
     exit 2;;
 esac
