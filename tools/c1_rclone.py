@@ -24,7 +24,12 @@ from urllib.parse import quote
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT.parent
 DATA_PROTOCOL = 'c1-base-assets-v1'
-RUN_VARIANT = 'c1'
+BASELINE = os.environ.get('DDVC_RUN_VARIANT') == 'baseline_quality'
+RUN_VARIANT = 'baseline_quality' if BASELINE else 'c1'
+if BASELINE:DATA_PROTOCOL = 'baseline-quality-base-assets-v1'
+
+def run_namespace():
+    return 'ddvc_baseline' if BASELINE else 'ddvc_c1'
 TEXT = {'.json', '.jsonl', '.yml', '.yaml', '.log', '.txt', '.tsv', '.csv'}
 
 
@@ -53,7 +58,7 @@ def revision():
 
 
 def run_name(dataset):
-    return dataset + '_c1_e' + ('15' if dataset == 'yc2' else '6') + '_b1'
+    return dataset + ('_baseline_e' if BASELINE else '_c1_e') + ('15' if dataset == 'yc2' else '6') + '_b1'
 
 
 def session_path(dataset):
@@ -202,7 +207,7 @@ class Drive:
     def initialize(self):
         parse_auth(Path(self.config).read_bytes(), self.remote)
         self.call('lsf', self.remote + ':', '--max-depth', '1', quiet=True)
-        for folder in ('bootstrap', 'code', 'data/yc2', 'data/anet', 'runs/ddvc_c1', 'logs'):
+        for folder in ('bootstrap', 'code', 'data/yc2', 'data/anet', 'runs/'+run_namespace(), 'logs'):
             self.call('mkdir', self.path(folder))
         announce('DRIVE_CONNECTED', self.path())
 
@@ -339,6 +344,9 @@ def pull_data(drive, dataset):
                 return True
             announce('LOCAL_BASE_DATA_NEEDS_PUBLISH', base)
             return False
+        if BASELINE:
+            from baseline_assets import import_c1_data
+            if import_c1_data(drive, sys.modules[__name__], dataset):return True
         if import_qts_data(drive, dataset):
             # Keep one shared feature bundle on Drive; do not upload a duplicate.
             return True
@@ -414,7 +422,7 @@ def recovery_allowed(name, dataset):
 class Recovery:
     def __init__(self, drive, state):
         self.drive, self.state = drive, state
-        self.remote = drive.path('runs/ddvc_c1/' + state['dataset'] + '/' + state['run_id'])
+        self.remote = drive.path('runs/'+run_namespace()+'/' + state['dataset'] + '/' + state['run_id'])
         self.signature = None
         self.lock = threading.Lock()
 
@@ -563,7 +571,8 @@ def launch(args):
             raise FileNotFoundError('Restore the run first, or start a fresh run without flags')
         state = dict(dataset=args.dataset, run_id=time.strftime('%Y%m%dT%H%M%SZ', time.gmtime()) + '_' + uuid.uuid4().hex[:12],
                      source_commit=revision(), work=str(WORK), remote=args.remote, root=args.root, variant=RUN_VARIANT)
-    if (state['source_commit'] != revision() or state['remote'] != args.remote or state['root'] != args.root):
+    if (state['source_commit'] != revision() or state['remote'] != args.remote or state['root'] != args.root
+            or state.get('variant','c1') != RUN_VARIANT):
         raise ValueError('Session source or Drive destination differs')
     run = WORK / 'runs' / name
     if args.resume:
@@ -586,7 +595,7 @@ def launch(args):
     (logs / (args.dataset + '.drive.pid')).write_text(str(process.pid))
     announce('STARTED', args.dataset, 'PID', process.pid, 'run_id', state['run_id'])
     announce('LOG', logs / (args.dataset + '.drive.log'))
-    announce('DRIVE_RUN', args.remote + ':' + args.root + '/runs/ddvc_c1/' + args.dataset + '/' + state['run_id'])
+    announce('DRIVE_RUN', args.remote + ':' + args.root + '/runs/'+run_namespace()+'/' + args.dataset + '/' + state['run_id'])
 
 
 def worker(args, drive):

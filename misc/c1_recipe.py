@@ -24,6 +24,9 @@ def validate_method(config):
 
 
 def validate_training_method(config):
+    if config.get('experiment_recipe') == 'stable_global_baseline':
+        from misc.baseline_recipe import validate_method as validate_baseline
+        return validate_baseline(config)
     if config.get('experiment_recipe') == 'stable_c1':
         return validate_method(config)
     from misc.c2_recipe import validate_method as validate_c2

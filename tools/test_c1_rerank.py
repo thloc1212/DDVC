@@ -142,10 +142,16 @@ class CacheTests(unittest.TestCase):
         self.assertEqual(result.returncode,0,result.stderr);self.assertIn('{yc2,anet}',result.stdout)
 
     def test_validation_evaluation_reuses_candidates_fixed_N_and_frozen_head(self):
+        self.evaluate_fixture(False)
+
+    def test_global_baseline_evaluates_four_fixed_candidate_comparisons(self):
+        self.evaluate_fixture(True)
+
+    def evaluate_fixture(self, baseline):
         with tempfile.TemporaryDirectory() as temp:
             previous=Path.cwd()
             try:
-                root=Path(temp);w=Workflow.__new__(Workflow);w.folder=root/'work';w.folder.mkdir()
+                root=Path(temp);w=Workflow.__new__(Workflow);w.baseline=baseline;w.folder=root/'work';w.folder.mkdir()
                 w.base=root/'base';(w.base/'source').mkdir(parents=True);w.sig='eval-signature'
                 w.checkpoint=root/'model-best.pth';w.checkpoint.write_bytes(b'unchanged C1 weights')
                 w.manifest={'base_checkpoint_sha256':sha(w.checkpoint)}
@@ -168,18 +174,23 @@ class CacheTests(unittest.TestCase):
                     return dict(scores) if kwargs.get('infer_mode') else {'METEOR':scores['METEOR']}
                 scorer=SimpleNamespace(eval_metrics=evaluate_metrics)
                 with patch.dict(sys.modules,{'eval_utils_clip':scorer}),patch('torch.cuda.is_available',return_value=False):w.evaluate()
-                self.assertEqual(len(calls),3);self.assertTrue(all(c['infer_mode'] for c in calls))
+                self.assertEqual(len(calls),4 if baseline else 3);self.assertTrue(all(c['infer_mode'] for c in calls))
                 metric_file=w.folder/'evaluation/baseline_topk.metrics.json'
                 partial=json.loads(metric_file.read_text());partial['scores'].pop('CIDEr');atomic_json(metric_file,partial)
                 # Even a matching fingerprint must not make partial metrics reusable.
                 with patch.dict(sys.modules,{'eval_utils_clip':scorer}),patch('torch.cuda.is_available',return_value=False):w.evaluate()
-                self.assertEqual(len(calls),4)
+                self.assertEqual(len(calls),5 if baseline else 4)
                 self.assertIn('CIDEr',json.loads(metric_file.read_text())['scores'])
                 a=json.loads((w.folder/'evaluation/baseline_softnms.json').read_text())['results']
                 b=json.loads((w.folder/'evaluation/reranker_softnms.json').read_text())['results']
                 self.assertEqual([p['query_id'] for p in a['val']],[p['query_id'] for p in b['val']])
                 self.assertEqual(len(b['val']),2);self.assertEqual(headhash,sha(w.folder/'head-best.pt'))
                 self.assertTrue((w.folder/'evaluation/summary.tsv').is_file())
+                if baseline:
+                    a=json.loads((w.folder/'evaluation/baseline_topk.json').read_text())['results']
+                    b=json.loads((w.folder/'evaluation/reranker_topk.json').read_text())['results']
+                    self.assertEqual([p['query_id'] for p in a['val']],[p['query_id'] for p in b['val']])
+                    self.assertEqual(len(b['val']),2)
             finally:os.chdir(previous)
 
     def test_completed_head_can_migrate_only_from_explicit_evaluation_fix_source(self):

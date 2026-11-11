@@ -56,7 +56,7 @@ class Workflow:
         self.cfg=c1_pipeline.check(self.config_path)
         self.base_run=Path(self.cfg['save_dir'])/self.cfg['id']
         info=json.loads((self.base_run/'info.json').read_text(encoding='utf8'))
-        if info['last']['epoch']<self.cfg['epoch']-1:raise ValueError('Finish C1 training before fitting this head')
+        if info['last']['epoch']<self.cfg['epoch']-1:raise ValueError('Finish baseline training before fitting this head')
         self.epoch=info['best']['epoch'];self.checkpoint=self.base_run/'model-best.pth'
         self.raw_path=self.base_run/'prediction'/Path(info['best']['result_json_path']).name.replace('.json','.raw.json')
         self.final_path=self.raw_path.with_name(self.raw_path.name.replace('.raw.json','.json'))
@@ -69,18 +69,22 @@ class Workflow:
         self.idf=fit_idf(self.annotations,fit)
         raw=json.loads(self.raw_path.read_text(encoding='utf8'))['results']
         if set(raw)!=set(val):raise ValueError('Saved validation candidates do not cover the configured validation split')
+        self.baseline = self.cfg.get('experiment_recipe') == 'stable_global_baseline'
         self.manifest=dict(schema=SCHEMA,dataset=dataset,base_checkpoint_sha256=sha(self.checkpoint),
             base_epoch=self.epoch,base_config_sha256=sha(self.config_path),raw_sha256=sha(self.raw_path),
             data_signature=self.cfg['data_signature'],fit_ids=fit,dev_ids=sorted(dev),
             idf_sha256=signature(self.idf),epochs=20,head_lr=.001,batch_videos=8,beta_grid=list(BETAS),
             feature_source='local/context CLIP and existing frozen C1 GPT2 mean token embeddings',
             target='max over SAME GT: temporal IoU * fit-IDF weighted caption unigram F1')
+        if self.baseline:
+            self.manifest.update(base_method='C0_GLOBAL_NO_MASK',evaluation_modes=4,
+                                 feature_source='local/context CLIP and existing frozen baseline GPT2 mean token embeddings')
         self.sig=signature(self.manifest);self.manifest['signature']=self.sig
         path=self.folder/'manifest.json'
         if path.is_file() and json.loads(path.read_text(encoding='utf8'))!=self.manifest:
             raise ValueError('Frozen model/data/recipe fingerprint changed; use a new reranker work directory')
         atomic_json(path,self.manifest);atomic_json(self.folder/'fit_idf.json',self.idf)
-        print('FROZEN_C1_READY',dataset,'base_epoch',self.epoch,'head_fit',len(fit),'head_dev',len(dev),flush=True)
+        print('FROZEN_BASELINE_READY' if self.baseline else 'FROZEN_C1_READY',dataset,'base_epoch',self.epoch,'head_fit',len(fit),'head_dev',len(dev),flush=True)
 
     def chunks(self,split):
         if split=='train':ids=sorted(self.annotations)
@@ -259,6 +263,7 @@ class Workflow:
         model.load_state_dict(cp['model']);model.eval();beta=cp['beta'];head_sha=sha(self.folder/'head-best.pt')
         val=self.load('val');final=json.loads(self.final_path.read_text(encoding='utf8'))
         outputs={m:{} for m in ('baseline_topk','baseline_softnms','reranker_softnms')}
+        if self.baseline:outputs['reranker_topk']={}
         semantics=lambda rows:[(r['query_id'],r['timestamp'],r['sentence']) for r in rows]
         with torch.no_grad():
             for v in val:
@@ -267,6 +272,7 @@ class Workflow:
                 for mode,method in [('baseline_topk','topk'),('baseline_softnms','softnms')]:
                     outputs[mode][vid]=select_proposals(rows,n,method=method,sigma=.5,alpha=1.,temperature=2.)
                 outputs['reranker_softnms'][vid]=select(rows,n,q,beta)
+                if self.baseline:outputs['reranker_topk'][vid]=select(rows,n,q,beta,method='topk')
                 if semantics(outputs['baseline_softnms'][vid])!=semantics(final['results'][vid]):
                     raise ValueError('Baseline selection mismatch')
                 if len(outputs['reranker_softnms'][vid])!=len(outputs['baseline_softnms'][vid]):
@@ -278,7 +284,7 @@ class Workflow:
         folder=self.folder/'evaluation';folder.mkdir(exist_ok=True);summary=[]
         for mode,predictions in outputs.items():
             path=folder/(mode+'.json');atomic_json(path,dict(results=predictions,version='VERSION 1.0',external_data={},
-                                                          selection=dict(method=mode,beta=beta if mode=='reranker_softnms' else 0)))
+                                                          selection=dict(method=mode,beta=beta if mode.startswith('reranker_') else 0)))
             fingerprint=signature(dict(file=sha(path),refs=[sha(p) for p in self.cfg['gt_file_for_eval']+self.cfg['gt_file_for_para_eval']],
                                        scoring_protocol=SCORING_PROTOCOL))
             saved=folder/(mode+'.metrics.json');cached=json.loads(saved.read_text(encoding='utf8')) if saved.is_file() else {}
@@ -297,7 +303,7 @@ class Workflow:
             if mode=='baseline_softnms':
                 for k in METRICS:
                     if abs(scores[k]-100*final[k])>1e-4:raise ValueError('Stored C1 metric not reproduced: '+k)
-            row=dict(method=mode,beta=beta if mode=='reranker_softnms' else 0.,events=sum(map(len,predictions.values())),**{k:scores[k] for k in METRICS})
+            row=dict(method=mode,beta=beta if mode.startswith('reranker_') else 0.,events=sum(map(len,predictions.values())),**{k:scores[k] for k in METRICS})
             summary.append(row);write_table(folder/'summary.tsv',summary);print('RESULT',json.dumps(row),flush=True)
         if sha(self.folder/'head-best.pt')!=head_sha or sha(self.checkpoint)!=self.manifest['base_checkpoint_sha256']:
             raise RuntimeError('Head/base checkpoint changed during evaluation')

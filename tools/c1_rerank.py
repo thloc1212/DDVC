@@ -21,6 +21,8 @@ from reranking.pipeline import Workflow
 
 # This evaluation-only fix may reuse completed heads from the first release.
 # Training/data/feature signatures must still match exactly; all other revisions fail closed.
+BASELINE = os.environ.get('DDVC_RUN_VARIANT') == 'baseline_quality'
+RERANK_NAMESPACE = 'ddvc_baseline_rerank' if BASELINE else 'ddvc_c1_rerank'
 EVALUATION_FIX_SOURCES={'d75fbe759654996d90bfac979b2a7f333bbd254f'}
 
 
@@ -75,7 +77,7 @@ def alive(pid):
 class Backup:
     def __init__(self,transport,helpers,work,state):
         self.drive,self.helpers,self.work,self.state=transport,helpers,work,state
-        self.remote=transport.path('runs/ddvc_c1_rerank/'+state['dataset']+'/'+state['run_id'])
+        self.remote=transport.path('runs/'+RERANK_NAMESPACE+'/'+state['dataset']+'/'+state['run_id'])
         self.lock=threading.Lock()
 
     def files(self):
@@ -138,9 +140,9 @@ def launch(args):
         state=dict(dataset=args.dataset,work=str(args.work),base_work=str(args.base),source_commit=revision(),
                    run_id=time.strftime('%Y%m%dT%H%M%SZ',time.gmtime())+'_'+uuid.uuid4().hex[:12])
         base_state=args.base/'provenance'/('drive_session_'+args.dataset+'.json')
-        if base_state.is_file():state['base_c1_drive_session']=json.loads(base_state.read_text(encoding='utf8'))
+        if base_state.is_file():state['base_drive_session' if BASELINE else 'base_c1_drive_session']=json.loads(base_state.read_text(encoding='utf8'))
     transport,_=drive(args)
-    parent=transport.path('runs/ddvc_c1_rerank/'+args.dataset+'/'+state['run_id']);transport.call('mkdir',parent)
+    parent=transport.path('runs/'+RERANK_NAMESPACE+'/'+args.dataset+'/'+state['run_id']);transport.call('mkdir',parent)
     logs=args.work/'logs';logs.mkdir(parents=True,exist_ok=True)
     state['status']='STARTING';atomic_json(path,state)
     command=[sys.executable,'-u',str(Path(__file__).resolve()),'worker',args.dataset,'--base',str(args.base),'--work',str(args.work)]
@@ -148,7 +150,7 @@ def launch(args):
         proc=subprocess.Popen(command,cwd=ROOT,stdin=subprocess.DEVNULL,stdout=f,stderr=subprocess.STDOUT,start_new_session=True)
     # Only the worker updates state after launch: avoid overwriting its progress.
     pid_path(args.work,args.dataset).write_text(str(proc.pid),encoding='utf8')
-    announce('STARTED_FROZEN_C1_RERANK',proc.pid,'dataset',args.dataset)
+    announce('STARTED_FROZEN_DDVC_RERANK',proc.pid,'dataset',args.dataset)
     announce('LOG',logs/(args.dataset+'.rerank.log'));announce('DRIVE_RUN',parent)
 
 
@@ -195,7 +197,7 @@ def restore(args):
     transport,helpers=drive(args)
     if not args.run_id or not re.fullmatch('[A-Za-z0-9_-]+',args.run_id):raise ValueError('Restore requires --run-id ID')
     if state_path(args.work,args.dataset).exists():raise FileExistsError('Restore into a fresh reranker work directory')
-    remote=transport.path('runs/ddvc_c1_rerank/'+args.dataset+'/'+args.run_id+'/recovery')
+    remote=transport.path('runs/'+RERANK_NAMESPACE+'/'+args.dataset+'/'+args.run_id+'/recovery')
     candidates=[]
     for slot in (0,1):
         try:
@@ -237,7 +239,7 @@ def export(args):
         z.write(state_path(args.work,args.dataset),'provenance/session.json')
         for name in subprocess.check_output(['git','ls-files'],cwd=ROOT,text=True).splitlines():
             if Path(name).suffix in ('.py','.sh','.md','.json') and (ROOT/name).is_file():z.write(ROOT/name,'source/'+name)
-        z.writestr('EXPORT_MANIFEST.json',json.dumps(dict(method='FROZEN_C1_JOINT_RERANKER',dataset=args.dataset,
+        z.writestr('EXPORT_MANIFEST.json',json.dumps(dict(method='FROZEN_BASELINE_QUALITY' if BASELINE else 'FROZEN_C1_JOINT_RERANKER',dataset=args.dataset,
                     source_commit=revision(),base_C1_weights_included=False,small_ranker_weights_included=True,
                     validation_feature_cache_included=True,training_feature_cache_included=False)))
     announce('ZIP_READY',target)

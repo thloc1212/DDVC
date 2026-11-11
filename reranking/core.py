@@ -57,12 +57,13 @@ def temporal_iou(a,b):
     return x/max(1e-12,(a[1]-a[0])+(b[1]-b[0])-x)
 
 
-def select(rows,n,quality,beta):
+def select(rows,n,quality,beta,method='softnms'):
     """Same Gaussian Soft-NMS as C1; only initial score receives beta*quality.
 
     No GT argument. Counter N, timestamps and generated sentences are retained.
     beta=0 reproduces the original selector, including negative-score handling.
     """
+    if method not in ('topk','softnms'):raise ValueError('Unknown selection method')
     if len(quality)!=len(rows) or beta<0 or not math.isfinite(beta):raise ValueError('Invalid reranking input')
     pending=[]
     for index,(row,q) in enumerate(zip(rows,quality)):
@@ -74,6 +75,7 @@ def select(rows,n,quality,beta):
     while pending and len(chosen)<n:
         index=max(range(len(pending)),key=lambda i:pending[i][1])
         p,score,_=pending.pop(index);p['selection_score']=score;chosen.append(p)
+        if method=='topk':continue
         updated=[]
         for row,value,original in pending:
             factor=math.exp(-temporal_iou(p['timestamp'],row['timestamp'])**2/.5)

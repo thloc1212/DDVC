@@ -9,6 +9,7 @@ COMMAND=${1:-help}
 DATASET=${2:-yc2}
 case "$DATASET" in yc2) EPOCHS=15;; anet) EPOCHS=6;; *) echo 'Dataset must be yc2 or anet'; exit 2;; esac
 RUN=${DATASET}_c1_e${EPOCHS}_b1
+if [[ ${DDVC_RUN_VARIANT:-} == baseline_quality ]]; then RUN=${DATASET}_baseline_e${EPOCHS}_b1; fi
 export CUDA_VISIBLE_DEVICES=${DDVC_GPU:-0} TOKENIZERS_PARALLELISM=false PYTHONUNBUFFERED=1 MPLBACKEND=Agg LC_ALL=C LANG=C
 export PYTHONPATH="$REPO/tools:$REPO:$REPO/ddvc/ops${PYTHONPATH:+:$PYTHONPATH}"
 export HF_HOME=${DDVC_HF_HOME:-$WORK/hf-cache}
@@ -26,9 +27,15 @@ case "$COMMAND" in
    "$PY" -c 'import json,torch,torchvision; from pathlib import Path; assert json.loads(Path("../provenance/native_torch_before.json").read_text())==[torch.__version__,torchvision.__version__],"Native Torch changed"'
    "$PY" tools/molab_pipeline.py patch
    logged tokenizer "$PY" tools/prepare_gpt2_tokenizer.py
-   logged cpu_c1 "$PY" smoke_test_c1.py
-   logged drive_tests "$PY" tools/test_c1_rclone.py
-   logged cli_imports "$PY" tools/test_c1_cli_imports.py
+   logged cpu_c1 env -u DDVC_RUN_VARIANT "$PY" smoke_test_c1.py
+   logged drive_tests env -u DDVC_RUN_VARIANT "$PY" tools/test_c1_rclone.py
+   logged cli_imports env -u DDVC_RUN_VARIANT "$PY" tools/test_c1_cli_imports.py
+   if [[ ${DDVC_RUN_VARIANT:-} == baseline_quality ]]; then
+     logged cpu_baseline "$PY" smoke_test_baseline_quality.py
+     logged baseline_assets "$PY" tools/test_baseline_assets.py
+     logged baseline_chain "$PY" tools/test_baseline_quality_chain.py
+     logged quality_tests "$PY" tools/test_c1_rerank.py
+   fi
    logged caption_targets "$PY" smoke_test_caption_targets.py --gpt2
    logged java "$PY" -u tools/molab_pipeline.py java --target "$WORK/tools/java"
    if [[ $("$PY" -c 'import torch; print(torch.version.cuda)') == 13.0 ]]; then

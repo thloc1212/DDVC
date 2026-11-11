@@ -26,8 +26,8 @@ class GPT2CaptionModel(nn.Module):
     def __init__(self, opt):
         super(GPT2CaptionModel, self).__init__()
         self.opt = opt
-        if not opt.add_cross_attention or not getattr(opt, 'learned_proposal_mask', True):
-            raise ValueError('C2 requires learned proposal masking and visual cross attention')
+        if not opt.add_cross_attention:
+            raise ValueError('This experiment requires visual cross attention')
         # prefix mlp
         self.fc1 = nn.Linear(self.opt.hidden_dim, self.opt.hidden_dim*2)
         self.fc2 = nn.Linear(self.opt.hidden_dim*2, 768)
@@ -39,7 +39,8 @@ class GPT2CaptionModel(nn.Module):
         self.model = GPT2LMHeadModel(configuration)
         with torch.random.fork_rng(devices=[]):
             torch.default_generator.manual_seed(1731)
-            self.proposal_mask = LearnedGatedProposalMask(opt.proposal_mask_bins, opt.proposal_mask_encoding_dim)
+            self.proposal_mask = (LearnedGatedProposalMask(opt.proposal_mask_bins, opt.proposal_mask_encoding_dim)
+                                  if getattr(opt, 'learned_proposal_mask', True) else None)
 
         self.prefix_token=self.tokenizer("<|endoftext|>",return_tensors="pt")["input_ids"].to(opt.device)
 
@@ -57,6 +58,10 @@ class GPT2CaptionModel(nn.Module):
         cross_emb = clip_frame_feature.repeat(hs.shape[0], 1, 1).detach()
         if video_mask is None:
             video_mask = torch.ones(1, cross_emb.shape[1], device=cross_emb.device, dtype=torch.bool)
+        if self.proposal_mask is None:
+            # Baseline C0: every query sees the original full video and padding mask.
+            mask = video_mask.to(device=cross_emb.device, dtype=torch.bool).expand(hs.shape[0], -1)
+            return cross_emb.contiguous(), mask
         if event_boxes is None or len(event_boxes) != hs.shape[0]:
             raise ValueError('Learned masks need one interval per caption query')
         details = self.proposal_mask(event_boxes, video_mask, event_scores, anchor_boxes)
