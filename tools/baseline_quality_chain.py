@@ -9,7 +9,8 @@ import time
 
 ROOT=Path(__file__).resolve().parents[1]
 WORK=ROOT.parent
-SETUP_FIX_SOURCES={'b54f081b648b89a7887fb5df651985ef4a0cf9ce'}
+SETUP_FIX_SOURCES={'b54f081b648b89a7887fb5df651985ef4a0cf9ce',
+                   '80c29717b43268423c30150f01f999f7a43eb647'}
 
 
 def alive(pid,script):
@@ -36,16 +37,15 @@ def prepare_setup_retry(dataset,current):
         raise ValueError('Setup retry source is not an approved setup-only fix')
     name=f'{dataset}_baseline_e{15 if dataset=="yc2" else 6}_b1'
     if (state.get('status')!='FAILED_BACKUP_PENDING' or (WORK/'runs'/name).exists()
-            or (WORK/'provenance/cuda_ready').exists()
             or (WORK/'frozen_quality/provenance'/('rerank_'+dataset+'.json')).exists()):
-        raise ValueError('Setup retry is only for failures before CUDA readiness and before any training run. Existing training is preserved.')
+        raise ValueError('Setup/data retry requires a failed worker and no training run or reranker. Existing training is preserved.')
     if alive(state.get('worker_pid'),'c1_rclone.py'):
         raise RuntimeError('Baseline worker is still running; inspect logs first')
     archive=WORK/'provenance/setup_retry_history'/f'{dataset}_{time.time_ns()}.json'
     archive.parent.mkdir(parents=True,exist_ok=True)
     archive.write_text(json.dumps(state,indent=2),encoding='utf8')
     state['source_history']=list(state.get('source_history',[]))+[
-        dict(source_commit=state['source_commit'],reason='setup-only smoke fix; no training run or checkpoint existed')]
+        dict(source_commit=state['source_commit'],reason='setup/import-only fix; no training run or checkpoint existed')]
     state.update(source_commit=current,status='SETUP_RETRY_READY')
     temporary=path.with_suffix('.json.tmp');temporary.write_text(json.dumps(state,indent=2),encoding='utf8')
     os.replace(temporary,path)

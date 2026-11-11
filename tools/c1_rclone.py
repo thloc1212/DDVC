@@ -22,6 +22,9 @@ import uuid
 from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parents[1]
+# Molab may set PYTHONSAFEPATH: executing tools/c1_rclone.py does not then
+# put its sibling tools on sys.path. Bootstrap explicitly, including workers.
+sys.path[:0] = [str(ROOT), str(ROOT / 'tools')]
 WORK = ROOT.parent
 DATA_PROTOCOL = 'c1-base-assets-v1'
 BASELINE = os.environ.get('DDVC_RUN_VARIANT') == 'baseline_quality'
@@ -629,6 +632,10 @@ def worker(args, drive):
             launcher = str(ROOT / 'tools/c1_molab.sh')
             if not (WORK / 'provenance/cuda_ready').is_file():
                 subprocess.run(['bash', launcher, 'setup'], cwd=ROOT, check=True)
+            elif BASELINE:
+                # A setup-only retry reuses the compiled operator, but verifies
+                # the current CPU smoke checks before proceeding to data/train.
+                subprocess.run([sys.executable,'-B','smoke_test_baseline_quality.py'],cwd=ROOT,check=True)
             # Also stage tokenizer on retry/restore when CUDA setup was already done.
             subprocess.run([sys.executable,'tools/prepare_gpt2_tokenizer.py'],cwd=ROOT,check=True)
             cached = pull_data(drive, args.dataset)

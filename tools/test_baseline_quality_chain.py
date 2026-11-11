@@ -31,11 +31,10 @@ class ChainTests(unittest.TestCase):
             self.assertFalse((root/'runs').exists())
 
     def test_setup_retry_rejects_started_training_and_unapproved_sources(self):
-        for condition in ('run','cuda','quality','source','alive','status'):
+        for condition in ('run','quality','source','alive','status'):
             with self.subTest(condition=condition),tempfile.TemporaryDirectory() as temp:
                 root=Path(temp);path,state=self.setup_state(root)
                 if condition=='run':(root/'runs/yc2_baseline_e15_b1').mkdir(parents=True)
-                if condition=='cuda':(root/'provenance/cuda_ready').touch()
                 if condition=='quality':
                     p=root/'frozen_quality/provenance/rerank_yc2.json';p.parent.mkdir(parents=True);p.write_text('{}')
                 if condition=='source':state['source_commit']='unknown-source'
@@ -44,6 +43,17 @@ class ChainTests(unittest.TestCase):
                 with patch.object(chain,'WORK',root),patch.object(chain,'alive',return_value=condition=='alive'):
                     with self.assertRaises((ValueError,RuntimeError)):chain.prepare_setup_retry('yc2','new-smoke-fix')
                 self.assertEqual(path.read_bytes(),before)
+
+    def test_post_cuda_import_failure_retries_without_removing_compiled_state(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);path,state=self.setup_state(root,'anet')
+            state['source_commit']='80c29717b43268423c30150f01f999f7a43eb647'
+            path.write_text(json.dumps(state));marker=root/'provenance/cuda_ready';marker.touch()
+            binary=root/'source/ddvc/ops/compiled.so';binary.parent.mkdir(parents=True);binary.write_bytes(b'keep-this-operator')
+            with patch.object(chain,'WORK',root),patch.object(chain,'alive',return_value=False):
+                chain.prepare_setup_retry('anet','new-import-fix')
+            self.assertTrue(marker.exists());self.assertEqual(binary.read_bytes(),b'keep-this-operator')
+            self.assertEqual(json.loads(path.read_text())['source_commit'],'new-import-fix')
 
     def test_setup_retry_keeps_the_two_stage_chain(self):
         with patch.object(chain.subprocess,'run') as run,patch.object(chain,'wait_stage',side_effect=RuntimeError('stop after launch')):
