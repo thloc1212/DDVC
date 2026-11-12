@@ -18,6 +18,9 @@ from .head import JointQualityHead,objective
 
 ROOT=Path(__file__).resolve().parents[1]
 BETAS=(0.,.25,.5,1.,2.)
+TRAINING_SEED=42
+HEAD_SPLIT_SEED=777
+FIXED_BETAS={'yc2':1.,'anet':6.}
 METRICS=('CIDEr','METEOR','Bleu_4','soda_c','Precision','Recall','MetaScore')
 SCORING_PROTOCOL='ddvc-2018-full-language-infer-mode-v1'
 
@@ -63,7 +66,7 @@ class Workflow:
         self.annotations=json.loads(Path(self.cfg['train_caption_file']).read_text(encoding='utf8'))
         val=json.loads(Path(self.cfg['val_caption_file']).read_text(encoding='utf8'))
         if set(val)&set(self.annotations):raise ValueError('Baseline train/validation ID leakage')
-        ids=sorted(self.annotations);order=np.random.default_rng(777).permutation(len(ids))
+        ids=sorted(self.annotations);order=np.random.default_rng(HEAD_SPLIT_SEED).permutation(len(ids))
         dev={ids[i] for i in order[:max(1,round(.1*len(ids))) ]};fit=[i for i in ids if i not in dev]
         self.folds={vid:('head_dev' if vid in dev else 'head_fit') for vid in ids}
         self.idf=fit_idf(self.annotations,fit)
@@ -73,6 +76,7 @@ class Workflow:
             base_epoch=self.epoch,base_config_sha256=sha(self.config_path),raw_sha256=sha(self.raw_path),
             data_signature=self.cfg['data_signature'],fit_ids=fit,dev_ids=sorted(dev),
             idf_sha256=signature(self.idf),epochs=20,head_lr=.001,batch_videos=8,beta_grid=list(BETAS),
+            training_seed=TRAINING_SEED,head_split_seed=HEAD_SPLIT_SEED,fixed_beta=FIXED_BETAS[dataset],
             feature_source='local/context CLIP and existing frozen C1 GPT2 mean token embeddings',
             target='max over SAME GT: temporal IoU * fit-IDF weighted caption unigram F1')
         self.sig=signature(self.manifest);self.manifest['signature']=self.sig
@@ -107,7 +111,7 @@ class Workflow:
         if opt.combined_encoder:opt.cap_num_feature_levels=5
         if opt.caption_decoder_new=='gpt2':opt.caption_decoder_type='gpt2'
         opt.rec_encdec=True;configure_runtime(opt)
-        random.seed(777);np.random.seed(777);torch.manual_seed(777)
+        random.seed(TRAINING_SEED);np.random.seed(TRAINING_SEED);torch.manual_seed(TRAINING_SEED)
         train=PropSeqDataset(opt.train_caption_file,opt.visual_feature_folder,opt.dict_file,False,'gt',opt)
         val=PropSeqDataset(opt.val_caption_file,opt.visual_feature_folder,opt.dict_file,False,'gt',opt)
         model,criterion,contrastive,post=build(opt);model.translator=train.translator
@@ -120,7 +124,7 @@ class Workflow:
         bank=load_clip_memory_bank(opt);bank['vid_sent_embeds']=torch.as_tensor(bank['vid_sent_embeds'],device=opt.device)
         bank['clip_gt']=load_clip_gt(opt)
         def infer(ds,index):
-            np.random.seed(777+index);item=ds[index]
+            np.random.seed(TRAINING_SEED+index);item=ds[index]
             dt=collate_fn([item]);dt={k:v.to(opt.device) if isinstance(v,torch.Tensor) else v for k,v in dt.items()}
             dt['video_target']=[{k:v.to(opt.device) if isinstance(v,torch.Tensor) else v for k,v in t.items()} for t in dt['video_target']]
             dt=collections.defaultdict(lambda:None,dt)
@@ -199,7 +203,7 @@ class Workflow:
         device='cuda' if torch.cuda.is_available() else 'cpu'
         all_train=self.load('train');fit=[v for v in all_train if v['fold']=='head_fit'];dev=[v for v in all_train if v['fold']=='head_dev']
         if set(v['video_id'] for v in fit)&set(v['video_id'] for v in dev):raise ValueError('Head fit/dev leakage')
-        torch.manual_seed(777);model=JointQualityHead().to(device)
+        torch.manual_seed(TRAINING_SEED);model=JointQualityHead().to(device)
         optimizer=torch.optim.AdamW(model.parameters(),lr=.001,weight_decay=1e-4)
         last=self.folder/'head-last.pt';best=self.folder/'head-best.pt';start=0;minimum=float('inf');history=[]
         if last.is_file():
@@ -213,9 +217,10 @@ class Workflow:
                 print('HEAD_AND_BETA_ALREADY_FROZEN',frozen['epoch'],frozen['beta'],flush=True)
                 return
         # There is no reference to the C1 model in optimizer.param_groups.
-        print('HEAD_ONLY_TRAINING',sum(p.numel() for p in model.parameters()),'parameters','epochs',20,flush=True)
+        print('HEAD_ONLY_TRAINING',sum(p.numel() for p in model.parameters()),'parameters','epochs',20,
+              'training_seed',TRAINING_SEED,'head_split_seed',HEAD_SPLIT_SEED,'fixed_beta',FIXED_BETAS[self.dataset],flush=True)
         for epoch in range(start,20):
-            torch.manual_seed(777+epoch);order=np.random.default_rng(777+epoch).permutation(len(fit))
+            torch.manual_seed(TRAINING_SEED+epoch);order=np.random.default_rng(TRAINING_SEED+epoch).permutation(len(fit))
             model.train();training=[]
             for lo in range(0,len(order),8):
                 batch=[fit[i] for i in order[lo:lo+8]];x,y,valid=self.batch(batch,device)
@@ -245,9 +250,13 @@ class Workflow:
             value=float(np.mean([dev_reward(v['rows'],select(v['rows'],v['N'],q,beta),v['reward']) for v,q in zip(dev,qualities)]))
             grid.append(dict(beta=beta,head_dev_reward=value))
             if value>winning+1e-8:winning=value;winner=beta
-        cp.update(beta=winner,beta_selection='head-dev split of TRAIN; never DVC validation',beta_grid=grid)
-        atomic_torch(best,cp);atomic_json(self.folder/'beta_selection.json',dict(beta=winner,grid=grid,scope='TRAIN head_dev only'))
-        print('HEAD_FROZEN_BEFORE_VALIDATION','epoch',cp['epoch'],'beta',winner,flush=True)
+        beta=FIXED_BETAS[self.dataset]
+        scope='Fixed before seed-42 training from previous seed-777 experiments; ANET beta 6 was validation-tuned'
+        cp.update(beta=beta,beta_selection=scope,beta_grid=grid,head_dev_beta=winner,
+                  training_seed=TRAINING_SEED,head_split_seed=HEAD_SPLIT_SEED)
+        atomic_torch(best,cp);atomic_json(self.folder/'beta_selection.json',
+            dict(beta=beta,head_dev_beta=winner,grid=grid,scope=scope))
+        print('HEAD_FROZEN_BEFORE_VALIDATION','epoch',cp['epoch'],'beta',beta,flush=True)
 
     def evaluate(self):
         from misc.proposal_selection import select_proposals

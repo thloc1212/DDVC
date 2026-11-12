@@ -24,7 +24,7 @@ from urllib.parse import quote
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT.parent
 DATA_PROTOCOL = 'c1-base-assets-v1'
-RUN_VARIANT = 'c1'
+RUN_VARIANT = 'prawn-seed42'
 TEXT = {'.json', '.jsonl', '.yml', '.yaml', '.log', '.txt', '.tsv', '.csv'}
 
 
@@ -202,7 +202,7 @@ class Drive:
     def initialize(self):
         parse_auth(Path(self.config).read_bytes(), self.remote)
         self.call('lsf', self.remote + ':', '--max-depth', '1', quiet=True)
-        for folder in ('bootstrap', 'code', 'data/yc2', 'data/anet', 'runs/ddvc_c1', 'logs'):
+        for folder in ('bootstrap', 'code', 'data/yc2', 'data/anet', 'runs/prawn_seed42_generator', 'logs'):
             self.call('mkdir', self.path(folder))
         announce('DRIVE_CONNECTED', self.path())
 
@@ -261,13 +261,13 @@ def data_identity():
             'tools/activitynet_pipeline.py', 'tools/kaggle_mask_recipe.json')}
 
 
-def import_qts_data(drive, dataset):
+def import_qts_data(drive, dataset, protocol='qts-base-assets-v1'):
     """Reuse verified data bytes only; never import QTS weights or model options."""
-    parent = drive.path('data/' + dataset + '/qts-base-assets-v1')
+    parent = drive.path('data/' + dataset + '/' + protocol)
     # Listing the dataset parent avoids treating an auth failure as a cache miss.
     folders = drive.call('lsf', drive.path('data/' + dataset), '--dirs-only',
                          '--max-depth', '1', quiet=True).splitlines()
-    if 'qts-base-assets-v1/' not in folders:
+    if protocol + '/' not in folders:
         return False
     pointer = drive.optional_json(parent + '/LATEST.json')
     if pointer is None:
@@ -277,12 +277,15 @@ def import_qts_data(drive, dataset):
         raise ValueError('Invalid legacy data generation')
     remote = parent + '/generations/' + generation
     meta = drive.read_json(remote + '/READY.json')
-    if meta.get('protocol') != 'qts-base-assets-v1' or meta.get('dataset') != dataset:
+    if meta.get('protocol') != protocol or meta.get('dataset') != dataset:
         raise ValueError('Unexpected legacy data manifest')
+    if protocol == DATA_PROTOCOL and meta.get('asset_code') != data_identity():
+        raise ValueError('Shared data preparation code changed')
     old_work = PurePosixPath(meta.get('work', ''))
     if not old_work.is_absolute() or '..' in old_work.parts:
         raise ValueError('Invalid legacy cache root')
-    old_base = old_work / 'prepared' / (dataset + '_qts_base_assets')
+    suffix = '_c1_base_assets' if protocol == DATA_PROTOCOL else '_qts_base_assets'
+    old_base = old_work / 'prepared' / (dataset + suffix)
     base = base_path(dataset)
     if base.exists():
         raise FileExistsError('Inspect partial local data before importing: ' + str(base))
@@ -361,8 +364,15 @@ def pull_data(drive, dataset):
     source = remote + '/generations/' + generation
     meta = drive.read_json(source + '/READY.json')
     if (meta.get('protocol') != DATA_PROTOCOL or meta.get('dataset') != dataset
-            or meta.get('work') != str(WORK) or meta.get('asset_code') != data_identity()):
+            or meta.get('asset_code') != data_identity()):
         raise ValueError('Shared data cache has a different preparation recipe/root')
+    if meta.get('work') != str(WORK):
+        if local_ready:
+            receipt = WORK/'provenance'/('imported_data_'+dataset+'.json')
+            if not receipt.is_file():
+                raise ValueError('Local data lacks a verified relocation receipt')
+            return True
+        return import_qts_data(drive, dataset, DATA_PROTOCOL)
     if local_ready:
         announce('LOCAL_BASE_DATA_PRESENT_AND_REMOTE_CACHE_READY', base)
         return True
@@ -414,7 +424,7 @@ def recovery_allowed(name, dataset):
 class Recovery:
     def __init__(self, drive, state):
         self.drive, self.state = drive, state
-        self.remote = drive.path('runs/ddvc_c1/' + state['dataset'] + '/' + state['run_id'])
+        self.remote = drive.path('runs/prawn_seed42_generator/' + state['dataset'] + '/' + state['run_id'])
         self.signature = None
         self.lock = threading.Lock()
 
@@ -586,7 +596,7 @@ def launch(args):
     (logs / (args.dataset + '.drive.pid')).write_text(str(process.pid))
     announce('STARTED', args.dataset, 'PID', process.pid, 'run_id', state['run_id'])
     announce('LOG', logs / (args.dataset + '.drive.log'))
-    announce('DRIVE_RUN', args.remote + ':' + args.root + '/runs/ddvc_c1/' + args.dataset + '/' + state['run_id'])
+    announce('DRIVE_RUN', args.remote + ':' + args.root + '/runs/prawn_seed42_generator/' + args.dataset + '/' + state['run_id'])
 
 
 def worker(args, drive):

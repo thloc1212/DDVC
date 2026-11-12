@@ -100,7 +100,7 @@ def make_config(base, work, dataset):
     cfg=clean_legacy_metadata(cfg)
     name=run_name(dataset)
     cfg.update(METHOD)
-    cfg.update(id=name,exp_name=name,fixed_run_id=True,cfg_path='',save_dir=str(Path(work)/'runs'),
+    cfg.update(seed=42,id=name,exp_name=name,fixed_run_id=True,cfg_path='',save_dir=str(Path(work)/'runs'),
                epoch=epochs(dataset),start_from='',start_from_mode='last',pretrain=None,
                only_ft_captioner=False,only_ft_class_head=False,training_scheme='all',
                experiment_recipe='stable_c1',selection_experiment='softnms',
@@ -177,7 +177,7 @@ def check(path, require_features=True):
     if {k:v for k,v in cfg.items() if k not in mutable}!={k:v for k,v in expected.items() if k not in mutable}:
         raise ValueError('C1 config drift: '+str(path))
     ds=manifest['dataset']
-    invariants=dict(seed=777,batch_size=1,gradient_accumulation_steps=1,precision='fp32',allow_tf32=False,
+    invariants=dict(seed=42,batch_size=1,gradient_accumulation_steps=1,precision='fp32',allow_tf32=False,
                     lr=5e-5,weight_decay=1e-4,epoch=epochs(ds),num_queries=50 if ds=='yc2' else 10,
                     gt_proposal_sample_num=10,max_eseq_length=20,count_loss_coef=.5,
                     able_ret=True,aux_loss=True,learning_rate_decay_start=8,

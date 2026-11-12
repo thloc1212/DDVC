@@ -117,7 +117,7 @@ class CacheTests(unittest.TestCase):
 
     def test_full_head_fit_resume_and_frozen_beta_without_val_access(self):
         with tempfile.TemporaryDirectory() as temp:
-            workflow=Workflow.__new__(Workflow);workflow.folder=Path(temp);workflow.sig='fit-only-test'
+            workflow=Workflow.__new__(Workflow);workflow.folder=Path(temp);workflow.sig='fit-only-test';workflow.dataset='anet'
             rng=np.random.default_rng(777);videos=[]
             for i in range(10):
                 v=dict(video_id=str(i),rows=rows(),N=2,fold='head_fit' if i<8 else 'head_dev',
@@ -130,8 +130,9 @@ class CacheTests(unittest.TestCase):
             workflow.load=load
             with patch('torch.cuda.is_available',return_value=False):workflow.fit()
             cp=torch.load(workflow.folder/'head-best.pt',weights_only=False)
-            self.assertIn(cp['beta'],(0.,.25,.5,1.,2.));self.assertEqual(len(cp['history']) if 'history' in cp else 20,20)
-            self.assertIn('TRAIN',cp['beta_selection'])
+            self.assertEqual(cp['beta'],6.);self.assertEqual(len(cp['history']) if 'history' in cp else 20,20)
+            self.assertEqual(cp['training_seed'],42);self.assertEqual(cp['head_split_seed'],777)
+            self.assertIn('Fixed before seed-42',cp['beta_selection'])
             before=sha(workflow.folder/'head-best.pt')
             with patch('torch.cuda.is_available',return_value=False):workflow.fit()
             self.assertEqual(before,sha(workflow.folder/'head-best.pt'))
