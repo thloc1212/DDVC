@@ -1,4 +1,4 @@
-"""Seed-42 PRAWN generator then frozen quality training with verified Drive backups."""
+"""Seed-2016 PRAWN generator then frozen quality training with verified Drive backups."""
 import argparse
 import json
 import os
@@ -34,7 +34,7 @@ def chain_alive(dataset):
         return False
     try:
         raw = (Path('/proc') / path.read_text().strip() / 'cmdline').read_bytes()
-        return b'prawn_seed42.py' in raw and b'worker' in raw and dataset.encode() in raw.split(b'\0')
+        return b'prawn_seed2016.py' in raw and b'worker' in raw and dataset.encode() in raw.split(b'\0')
     except OSError:
         return False
 
@@ -61,7 +61,7 @@ def worker(args):
     import fcntl
     with (WORK / 'logs' / (args.dataset + '.prawn.lock')).open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        print('PRAWN_RECIPE', args.dataset, 'generator_seed=42 quality_seed=42 head_split_seed=777',
+        print('PRAWN_RECIPE', args.dataset, 'generator_seed=2016 quality_seed=2016 head_split_seed=777',
               'generator_epochs=' + ('15' if args.dataset == 'yc2' else '6'),
               'quality_epochs=20 batch=1 accumulation=1 beta=' + ('1' if args.dataset == 'yc2' else '6'), flush=True)
         state = read_state(state_path(args.dataset))
@@ -78,7 +78,7 @@ def worker(args):
             flags = ['--resume'] if args.resume and state else []
             command('c1_rerank.sh', 'start', args.dataset, '--work', str(QUALITY), *flags)
             wait_stage(args.dataset, quality=True)
-        print('PRAWN_TWO_STAGE_COMPLETE_BACKED_UP', args.dataset, 'seed=42', flush=True)
+        print('PRAWN_TWO_STAGE_COMPLETE_BACKED_UP', args.dataset, 'seed=2016', flush=True)
         print((QUALITY / 'runs' / args.dataset / 'evaluation/summary.tsv').read_text(encoding='utf-8-sig'), flush=True)
 
 
@@ -97,7 +97,7 @@ def start(args):
         proc = subprocess.Popen(launch, cwd=ROOT, stdout=stream, stderr=subprocess.STDOUT,
                                 stdin=subprocess.DEVNULL, start_new_session=True)
     (logs / (args.dataset + '.prawn.pid')).write_text(str(proc.pid), encoding='utf8')
-    print('PRAWN_STARTED', args.dataset, 'seed=42 PID', proc.pid, flush=True)
+    print('PRAWN_STARTED', args.dataset, 'seed=2016 PID', proc.pid, flush=True)
 
 
 def main():

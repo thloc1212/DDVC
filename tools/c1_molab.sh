@@ -29,7 +29,7 @@ case "$COMMAND" in
    logged cpu_c1 "$PY" smoke_test_c1.py
    logged drive_tests "$PY" tools/test_c1_rclone.py
    logged cli_imports "$PY" tools/test_c1_cli_imports.py
-   logged seed42_tests "$PY" tools/test_prawn_seed42.py
+   logged seed2016_tests "$PY" tools/test_prawn_seed2016.py
    logged caption_targets "$PY" smoke_test_caption_targets.py --gpt2
    logged java "$PY" -u tools/molab_pipeline.py java --target "$WORK/tools/java"
    if [[ $("$PY" -c 'import torch; print(torch.version.cuda)') == 13.0 ]]; then

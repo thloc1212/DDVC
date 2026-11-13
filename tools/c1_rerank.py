@@ -75,7 +75,7 @@ def alive(pid):
 class Backup:
     def __init__(self,transport,helpers,work,state):
         self.drive,self.helpers,self.work,self.state=transport,helpers,work,state
-        self.remote=transport.path('runs/prawn_seed42_quality/'+state['dataset']+'/'+state['run_id'])
+        self.remote=transport.path('runs/prawn_seed2016_quality/'+state['dataset']+'/'+state['run_id'])
         self.lock=threading.Lock()
 
     def files(self):
@@ -140,7 +140,7 @@ def launch(args):
         base_state=args.base/'provenance'/('drive_session_'+args.dataset+'.json')
         if base_state.is_file():state['base_c1_drive_session']=json.loads(base_state.read_text(encoding='utf8'))
     transport,_=drive(args)
-    parent=transport.path('runs/prawn_seed42_quality/'+args.dataset+'/'+state['run_id']);transport.call('mkdir',parent)
+    parent=transport.path('runs/prawn_seed2016_quality/'+args.dataset+'/'+state['run_id']);transport.call('mkdir',parent)
     logs=args.work/'logs';logs.mkdir(parents=True,exist_ok=True)
     state['status']='STARTING';atomic_json(path,state)
     command=[sys.executable,'-u',str(Path(__file__).resolve()),'worker',args.dataset,'--base',str(args.base),'--work',str(args.work)]
@@ -195,7 +195,7 @@ def restore(args):
     transport,helpers=drive(args)
     if not args.run_id or not re.fullmatch('[A-Za-z0-9_-]+',args.run_id):raise ValueError('Restore requires --run-id ID')
     if state_path(args.work,args.dataset).exists():raise FileExistsError('Restore into a fresh reranker work directory')
-    remote=transport.path('runs/prawn_seed42_quality/'+args.dataset+'/'+args.run_id+'/recovery')
+    remote=transport.path('runs/prawn_seed2016_quality/'+args.dataset+'/'+args.run_id+'/recovery')
     candidates=[]
     for slot in (0,1):
         try:

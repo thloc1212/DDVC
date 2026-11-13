@@ -14,16 +14,16 @@ sys.path.insert(0, str(ROOT / 'tools'))
 
 import yaml
 import c1_pipeline
-import prawn_seed42 as chain
+import prawn_seed2016 as chain
 from reranking.pipeline import TRAINING_SEED, HEAD_SPLIT_SEED, FIXED_BETAS
 from test_c1_rclone import FileDrive, q
 
 
-class Seed42Tests(unittest.TestCase):
+class Seed2016Tests(unittest.TestCase):
     def test_recipe_changes_training_seed_and_preserves_method(self):
         for dataset, epochs, queries in [('yc2', 15, 50), ('anet', 6, 10)]:
-            cfg = c1_pipeline.make_config({}, Path('/marimo/PRAWN_Seed42'), dataset)
-            self.assertEqual((cfg['seed'], cfg['epoch'], cfg['num_queries']), (42, epochs, queries))
+            cfg = c1_pipeline.make_config({}, Path('/marimo/PRAWN_Seed2016'), dataset)
+            self.assertEqual((cfg['seed'], cfg['epoch'], cfg['num_queries']), (2016, epochs, queries))
             self.assertEqual((cfg['batch_size'], cfg['gradient_accumulation_steps']), (1, 1))
             self.assertEqual((cfg['precision'], cfg['allow_tf32']), ('fp32', False))
             self.assertEqual((cfg['lr'], cfg['weight_decay']), (5e-5, 1e-4))
@@ -31,7 +31,7 @@ class Seed42Tests(unittest.TestCase):
             self.assertEqual(cfg['proposal_mask_loss_coef'], 0.)
             self.assertEqual(cfg['start_from'], '')
             self.assertIsNone(cfg['pretrain'])
-        self.assertEqual((TRAINING_SEED, HEAD_SPLIT_SEED), (42, 777))
+        self.assertEqual((TRAINING_SEED, HEAD_SPLIT_SEED), (2016, 777))
         self.assertEqual(FIXED_BETAS, {'yc2': 1., 'anet': 6.})
 
     def test_existing_shared_data_relocates_without_weights_or_remote_rewrite(self):

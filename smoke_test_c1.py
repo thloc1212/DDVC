@@ -53,7 +53,7 @@ def check_preparation():
             source=assets/'config.yml';source.write_text(yaml.safe_dump(cfg),encoding='utf8')
             cli.prepare(SimpleNamespace(work=work,dataset=ds,source_config=source,features=None))
             path=cli.config_path(work,ds);actual=cli.check(path)
-            assert actual['seed']==42
+            assert actual['seed']==2016
             assert actual['proposal_mask_loss_coef']==0 and 'concept_vocab_path' not in actual
             assert not list(path.parent.glob('*concept*'))
             assert Path(actual['train_caption_file']).read_bytes()==paths['train'].read_bytes()

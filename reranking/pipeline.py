@@ -18,7 +18,7 @@ from .head import JointQualityHead,objective
 
 ROOT=Path(__file__).resolve().parents[1]
 BETAS=(0.,.25,.5,1.,2.)
-TRAINING_SEED=42
+TRAINING_SEED=2016
 HEAD_SPLIT_SEED=777
 FIXED_BETAS={'yc2':1.,'anet':6.}
 METRICS=('CIDEr','METEOR','Bleu_4','soda_c','Precision','Recall','MetaScore')
@@ -251,7 +251,7 @@ class Workflow:
             grid.append(dict(beta=beta,head_dev_reward=value))
             if value>winning+1e-8:winning=value;winner=beta
         beta=FIXED_BETAS[self.dataset]
-        scope='Fixed before seed-42 training from previous seed-777 experiments; ANET beta 6 was validation-tuned'
+        scope='Fixed before seed-2016 training from previous seed-777 experiments; ANET beta 6 was validation-tuned'
         cp.update(beta=beta,beta_selection=scope,beta_grid=grid,head_dev_beta=winner,
                   training_seed=TRAINING_SEED,head_split_seed=HEAD_SPLIT_SEED)
         atomic_torch(best,cp);atomic_json(self.folder/'beta_selection.json',

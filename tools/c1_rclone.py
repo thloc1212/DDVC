@@ -24,7 +24,7 @@ from urllib.parse import quote
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT.parent
 DATA_PROTOCOL = 'c1-base-assets-v1'
-RUN_VARIANT = 'prawn-seed42'
+RUN_VARIANT = 'prawn-seed2016'
 TEXT = {'.json', '.jsonl', '.yml', '.yaml', '.log', '.txt', '.tsv', '.csv'}
 
 
@@ -202,7 +202,7 @@ class Drive:
     def initialize(self):
         parse_auth(Path(self.config).read_bytes(), self.remote)
         self.call('lsf', self.remote + ':', '--max-depth', '1', quiet=True)
-        for folder in ('bootstrap', 'code', 'data/yc2', 'data/anet', 'runs/prawn_seed42_generator', 'logs'):
+        for folder in ('bootstrap', 'code', 'data/yc2', 'data/anet', 'runs/prawn_seed2016_generator', 'logs'):
             self.call('mkdir', self.path(folder))
         announce('DRIVE_CONNECTED', self.path())
 
@@ -424,7 +424,7 @@ def recovery_allowed(name, dataset):
 class Recovery:
     def __init__(self, drive, state):
         self.drive, self.state = drive, state
-        self.remote = drive.path('runs/prawn_seed42_generator/' + state['dataset'] + '/' + state['run_id'])
+        self.remote = drive.path('runs/prawn_seed2016_generator/' + state['dataset'] + '/' + state['run_id'])
         self.signature = None
         self.lock = threading.Lock()
 
@@ -596,7 +596,7 @@ def launch(args):
     (logs / (args.dataset + '.drive.pid')).write_text(str(process.pid))
     announce('STARTED', args.dataset, 'PID', process.pid, 'run_id', state['run_id'])
     announce('LOG', logs / (args.dataset + '.drive.log'))
-    announce('DRIVE_RUN', args.remote + ':' + args.root + '/runs/prawn_seed42_generator/' + args.dataset + '/' + state['run_id'])
+    announce('DRIVE_RUN', args.remote + ':' + args.root + '/runs/prawn_seed2016_generator/' + args.dataset + '/' + state['run_id'])
 
 
 def worker(args, drive):

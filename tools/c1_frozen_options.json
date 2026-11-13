@@ -37,7 +37,7 @@
       0
     ],
     "disable_tqdm": false,
-    "seed": 42,
+    "seed": 2016,
     "random_seed": false,
     "disable_cudnn": 0,
     "debug": false,
@@ -310,7 +310,7 @@
       0
     ],
     "disable_tqdm": false,
-    "seed": 42,
+    "seed": 2016,
     "random_seed": false,
     "disable_cudnn": 0,
     "debug": false,
