@@ -1,4 +1,4 @@
-"""Historical C1 model/recipe: YouCook2 15 epochs, ANET 6 epochs by request."""
+"""PRAWN long-run generator recipe: YouCook2 30 epochs, ANET 15, accumulation 8."""
 import argparse
 import copy
 import hashlib
@@ -41,7 +41,7 @@ def dump(path, value):
 
 
 def epochs(dataset):
-    return 15 if dataset=='yc2' else 6
+    return 30 if dataset=='yc2' else 15
 
 
 def run_name(dataset):
@@ -177,7 +177,7 @@ def check(path, require_features=True):
     if {k:v for k,v in cfg.items() if k not in mutable}!={k:v for k,v in expected.items() if k not in mutable}:
         raise ValueError('C1 config drift: '+str(path))
     ds=manifest['dataset']
-    invariants=dict(seed=777,batch_size=1,gradient_accumulation_steps=1,precision='fp32',allow_tf32=False,
+    invariants=dict(seed=777,batch_size=1,gradient_accumulation_steps=8,precision='fp32',allow_tf32=False,
                     lr=5e-5,weight_decay=1e-4,epoch=epochs(ds),num_queries=50 if ds=='yc2' else 10,
                     gt_proposal_sample_num=10,max_eseq_length=20,count_loss_coef=.5,
                     able_ret=True,aux_loss=True,learning_rate_decay_start=8,

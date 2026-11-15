@@ -23,7 +23,7 @@ ORIGINAL_MAKE=base.make_config;ORIGINAL_CHECK=base.check;ORIGINAL_SMOKE=base.mak
 ORIGINAL_FINGERPRINT=base.fingerprint
 
 
-def run_name(dataset):return f'{dataset}_online_quality_{MODE}_e{base.epochs(dataset)}_b1'
+def run_name(dataset):return f'{dataset}_online_quality_{MODE}_e{base.epochs(dataset)}_b1_a8'
 def config_path(work,dataset):return Path(work)/'prepared'/run_name(dataset)/'config.yml'
 
 

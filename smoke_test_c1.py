@@ -42,8 +42,8 @@ def check_preparation():
             cfg=json.loads((ROOT/'tools/kaggle_mask_recipe.json').read_text())
             cfg.update(METHOD)
             cfg.update(dataset=ds,bank_type=[ds],bank_folder='clip',bank_path=str(assets/'bank'),
-                epoch=15 if ds=='yc2' else 6,num_queries=50 if ds=='yc2' else 10,vocab_size=json.loads((ROOT/'tools/c1_frozen_options.json').read_text())[ds]['vocab_size'],
-                seed=777,batch_size=1,gradient_accumulation_steps=1,precision='fp32',allow_tf32=False,
+                epoch=30 if ds=='yc2' else 15,num_queries=50 if ds=='yc2' else 10,vocab_size=json.loads((ROOT/'tools/c1_frozen_options.json').read_text())[ds]['vocab_size'],
+                seed=777,batch_size=1,gradient_accumulation_steps=8,precision='fp32',allow_tf32=False,
                 lr=5e-5,weight_decay=1e-4,aux_loss=True,able_ret=True,
                 train_caption_file=str(paths['train']),val_caption_file=str(paths['val']),
                 dict_file=str(words),visual_feature_folder=[str(feature)],gt_file_for_eval=[str(paths['val'])],

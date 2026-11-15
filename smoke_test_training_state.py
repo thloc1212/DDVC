@@ -118,7 +118,7 @@ def main():
         restore_rng(state);got=(random.random(),np.random.rand(),torch.rand(()))
         assert wanted[0]==got[0] and wanted[1]==got[1] and wanted[2]==got[2]
         # The actual loop must average both full windows and the final partial window.
-        Dataset.length=5;records.clear();steps.clear();evaluations.clear()
+        Dataset.length=17;records.clear();steps.clear();evaluations.clear()
         original_adam=optim.Adam
         class CheckedAdam(original_adam):
             def step(self,*args,**kwargs):
@@ -130,10 +130,10 @@ def main():
                 return super().step(*args,**kwargs)
         optim.Adam=CheckedAdam
         try:
-            accumulated=SimpleNamespace(**defaults,gradient_accumulation_steps=3,save_dir=str(Path(tmp)/'accumulated'))
+            accumulated=SimpleNamespace(**defaults,gradient_accumulation_steps=8,save_dir=str(Path(tmp)/'accumulated'))
             namespace['train'](accumulated)
             state=torch.load(Path(accumulated.save_dir)/'run/model-last.pth',weights_only=False)
-            assert state['optimizer_steps']==6 and len(steps)==15 and not records
+            assert state['optimizer_steps']==9 and len(steps)==51 and not records
         finally:
             optim.Adam=original_adam
     print('PASS: actual train loop with evaluator lambda-defaultdict metrics, nested metadata, failed-save protection, validation interruption/resume, no repeated epoch, exact model/scheduler/RNG continuity')

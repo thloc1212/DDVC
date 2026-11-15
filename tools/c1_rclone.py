@@ -29,12 +29,12 @@ ONLINE_QUALITY = os.environ.get('DDVC_RUN_VARIANT') == 'online_quality'
 QUALITY_MODE = os.environ.get('DDVC_QUALITY_MODE', 'joint')
 if ONLINE_QUALITY:
     if QUALITY_MODE not in ('joint', 'detached'):raise ValueError('Invalid online quality mode')
-    RUN_VARIANT = 'online_quality_' + QUALITY_MODE
+    RUN_VARIANT = 'online_quality_long_a8_' + QUALITY_MODE
     DATA_PROTOCOL = 'online-quality-base-assets-v1'
 
 
 def run_namespace():
-    return 'ddvc_online_quality/'+QUALITY_MODE if ONLINE_QUALITY else 'ddvc_c1'
+    return 'prawn_joint_long_a8/'+QUALITY_MODE if ONLINE_QUALITY else 'ddvc_c1_long_a8'
 
 
 def pipeline_script():
@@ -76,8 +76,8 @@ def revision():
 
 def run_name(dataset):
     if ONLINE_QUALITY:
-        return dataset + '_online_quality_' + QUALITY_MODE + '_e' + ('15' if dataset == 'yc2' else '6') + '_b1'
-    return dataset + '_c1_e' + ('15' if dataset == 'yc2' else '6') + '_b1'
+        return dataset + '_online_quality_' + QUALITY_MODE + '_e' + ('30' if dataset == 'yc2' else '15') + '_b1_a8'
+    return dataset + '_c1_e' + ('30' if dataset == 'yc2' else '15') + '_b1'
 
 
 def session_path(dataset):

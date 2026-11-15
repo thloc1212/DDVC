@@ -162,10 +162,10 @@ class OnlineQualityTests(unittest.TestCase):
 
     def test_config_preserves_base_recipe_and_separates_online_run(self):
         import online_quality_pipeline as pipeline
-        for ds,nq,epochs in [('yc2',50,15),('anet',10,6)]:
+        for ds,nq,epochs in [('yc2',50,30),('anet',10,15)]:
             cfg=pipeline.make_config(dict(dataset=ds,bank_type=[ds],train_caption_file='/data/train.json'),Path('/work'),ds)
             self.assertEqual(cfg['num_queries'],nq);self.assertEqual(cfg['epoch'],epochs)
-            self.assertEqual(cfg['proposal_mask_loss_coef'],0.);self.assertEqual(cfg['gradient_accumulation_steps'],1)
+            self.assertEqual(cfg['proposal_mask_loss_coef'],0.);self.assertEqual(cfg['gradient_accumulation_steps'],8)
             self.assertEqual(cfg['precision'],'fp32');self.assertFalse(cfg['start_from']);self.assertIsNone(cfg['pretrain'])
             self.assertTrue(cfg['online_quality']);self.assertIn('online_quality_',cfg['id'])
 
@@ -211,7 +211,7 @@ class OnlineQualityTests(unittest.TestCase):
                 prep=work/'prepared'/name;prep.mkdir(parents=True);(prep/'config.yml').write_text('id: '+name)
                 state=dict(dataset='anet',run_id='test_online',source_commit='FIXED_SOURCE',work=str(work),variant=q.RUN_VARIANT)
                 backup=q.Recovery(module.FileDrive(cloud),state)
-                self.assertIn('ddvc_online_quality/joint/anet',backup.remote.replace('\\','/'))
+                self.assertIn('prawn_joint_long_a8/joint/anet',backup.remote.replace('\\','/'))
                 self.assertTrue(backup.sync())
                 folder=run/'quality_evaluation';folder.mkdir();(folder/'policy.json').write_text('{"beta":1}')
                 self.assertTrue(backup.sync())  # checkpoint unchanged; calibration progress must still sync.

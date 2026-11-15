@@ -7,7 +7,7 @@ WORK=$(dirname "$REPO")
 PY=${DDVC_PYTHON:-/tmp/uv-venv/bin/python}
 COMMAND=${1:-help}
 DATASET=${2:-yc2}
-case "$DATASET" in yc2) EPOCHS=15;; anet) EPOCHS=6;; *) echo 'Dataset must be yc2 or anet'; exit 2;; esac
+case "$DATASET" in yc2) EPOCHS=30;; anet) EPOCHS=15;; *) echo 'Dataset must be yc2 or anet'; exit 2;; esac
 RUN=${DATASET}_c1_e${EPOCHS}_b1
 export CUDA_VISIBLE_DEVICES=${DDVC_GPU:-0} TOKENIZERS_PARALLELISM=false PYTHONUNBUFFERED=1 MPLBACKEND=Agg LC_ALL=C LANG=C
 export PYTHONPATH="$REPO/tools:$REPO:$REPO/ddvc/ops${PYTHONPATH:+:$PYTHONPATH}"
