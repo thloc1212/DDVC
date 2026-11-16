@@ -22,7 +22,7 @@ bash <<'BASH'
 set -euo pipefail
 export LC_ALL=C LANG=C
 test -f /marimo/KLTN_DRIVE_PRIVATE.env
-git clone --single-branch --branch prawn-original-b1-20261116 \
+git clone --single-branch --branch prawn-original-b1-20261116-v2 \
   https://github.com/thloc1212/DDVC.git /marimo/PRAWN_Original/source
 bash /marimo/PRAWN_Original/source/tools/prawn_original.sh start yc2
 bash /marimo/PRAWN_Original/source/tools/prawn_original.sh logs yc2
@@ -36,7 +36,7 @@ bash <<'BASH'
 set -euo pipefail
 export LC_ALL=C LANG=C
 test -f /marimo/KLTN_DRIVE_PRIVATE.env
-git clone --single-branch --branch prawn-original-b1-20261116 \
+git clone --single-branch --branch prawn-original-b1-20261116-v2 \
   https://github.com/thloc1212/DDVC.git /marimo/PRAWN_Original/source
 bash /marimo/PRAWN_Original/source/tools/prawn_original.sh start anet
 bash /marimo/PRAWN_Original/source/tools/prawn_original.sh logs anet
