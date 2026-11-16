@@ -118,6 +118,30 @@ LC_ALL=C LANG=C bash /marimo/PRAWN_Joint_Long/source/tools/prawn_joint_long.sh l
 
 Use `anet` for the ActivityNet account.
 
+### Restore on a work root containing runtime provenance
+
+The recovery update tagged `prawn-joint-long-a8-recovery-20261116` restores
+snapshots created by `prawn-joint-long-a8-20261115`. Compatibility is checked by
+comparing every tracked file. Only recovery transport, its tests, and this guide
+may differ. Model and training code must match.
+
+Recovery checks existing files before downloading. Identical files are reused.
+Different local logs or provenance files are moved into `.c1-local-conflicts`
+before the verified snapshot is installed. Different local checkpoint/config
+files are reported before a download starts.
+
+Verified download files are retained under `.c1-restore-cache` after an interrupted
+attempt and are reused on retry. The older temporary-directory downloader removes
+its staging files when it fails, so its failed download must be fetched again once.
+
+```bash
+git -C /marimo/PRAWN_Joint_Long/source fetch origin tag prawn-joint-long-a8-recovery-20261116
+git -C /marimo/PRAWN_Joint_Long/source checkout --detach prawn-joint-long-a8-recovery-20261116
+bash /marimo/PRAWN_Joint_Long/source/tools/prawn_joint_long.sh restore yc2 --run-id 20261115T112053Z_602050db7fd8
+bash /marimo/PRAWN_Joint_Long/source/tools/prawn_joint_long.sh resume yc2
+bash /marimo/PRAWN_Joint_Long/source/tools/prawn_joint_long.sh logs yc2
+```
+
 ## Export for analysis
 
 ```bash

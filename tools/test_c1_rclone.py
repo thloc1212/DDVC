@@ -161,6 +161,59 @@ class RecoveryTests(unittest.TestCase):
         self.assertFalse(self.last.exists())
         self.assertFalse((self.work / 'prepared').exists())
 
+    def test_restore_reuses_identical_local_artifacts_without_download(self):
+        recovery = q.Recovery(self.drive, self.state)
+        recovery.sync()
+        with patch.object(self.drive, 'copy', side_effect=AssertionError('Unexpected download')):
+            recovery.restore()
+        self.assertEqual(self.last.read_bytes(), b'old-checkpoint-optimizer-rng')
+
+    def test_restore_preserves_conflicting_runtime_provenance(self):
+        provenance = self.work / 'provenance/runtime_sources/data/video_dataset.py'
+        provenance.parent.mkdir(parents=True)
+        provenance.write_text('snapshot runtime source')
+        recovery = q.Recovery(self.drive, self.state)
+        recovery.sync()
+        self.clear_local()
+        provenance.write_text('local runtime source')
+        recovery.restore()
+        self.assertEqual(provenance.read_text(), 'snapshot runtime source')
+        archived = list((self.work / '.c1-local-conflicts').rglob('video_dataset.py'))
+        self.assertEqual(len(archived), 1)
+        self.assertEqual(archived[0].read_text(), 'local runtime source')
+
+    def test_different_local_checkpoint_is_rejected_before_download(self):
+        recovery = q.Recovery(self.drive, self.state)
+        recovery.sync()
+        self.last.write_bytes(b'new local training checkpoint')
+        with patch.object(self.drive, 'copy', side_effect=AssertionError('Unexpected download')):
+            with self.assertRaisesRegex(FileExistsError, 'before download'):
+                recovery.restore()
+        self.assertEqual(self.last.read_bytes(), b'new local training checkpoint')
+
+    def test_restore_reuses_cached_files_after_interrupted_download(self):
+        recovery = q.Recovery(self.drive, self.state)
+        recovery.sync()
+        self.clear_local()
+        original = self.drive.copy
+        def interrupted(*args, **kwargs):
+            original(*args, **kwargs)
+            raise RuntimeError('Connection interrupted after bytes arrived')
+        with patch.object(self.drive, 'copy', side_effect=interrupted):
+            with self.assertRaises(FileNotFoundError):
+                recovery.restore()
+        self.assertFalse(self.last.exists())
+        with patch.object(self.drive, 'copy', side_effect=AssertionError('Redownloaded verified cache')):
+            recovery.restore()
+        self.assertEqual(self.last.read_bytes(), b'old-checkpoint-optimizer-rng')
+
+    def test_source_compatibility_accepts_transport_changes_and_rejects_training_changes(self):
+        old = 'a' * 40
+        with patch.object(q.subprocess, 'check_output', return_value='tools/c1_rclone.py\n'):
+            self.assertTrue(q.compatible_source(old))
+        with patch.object(q.subprocess, 'check_output', return_value='tools/c1_rclone.py\ntrain.py\n'):
+            self.assertFalse(q.compatible_source(old))
+
     def test_data_cache_hash_verified_and_pipeline_identity_bound(self):
         base = q.base_path('anet')
         (base / 'data/anet/features').mkdir(parents=True)

@@ -74,6 +74,25 @@ def revision():
     return subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
 
 
+def compatible_source(source_commit):
+    """Allow recovery transport fixes only when every training/model file matches."""
+    if source_commit == revision():
+        return True
+    if not re.fullmatch(r'[0-9a-f]{40}', str(source_commit)):
+        return False
+    transport_files = {
+        'tools/c1_rclone.py', 'tools/test_c1_rclone.py',
+        'PRAWN_JOINT_LONG_MOLAB.md',
+    }
+    try:
+        changed = subprocess.check_output(
+            ['git', 'diff', '--name-only', source_commit, 'HEAD', '--'],
+            cwd=ROOT, text=True, stderr=subprocess.DEVNULL).splitlines()
+    except subprocess.CalledProcessError:
+        return False
+    return set(changed).issubset(transport_files)
+
+
 def run_name(dataset):
     if ONLINE_QUALITY:
         return dataset + '_online_quality_' + QUALITY_MODE + '_e' + ('30' if dataset == 'yc2' else '15') + '_b1_a8'
@@ -250,19 +269,36 @@ def fetch_verified(drive, remote, metadata, target, allowed=None):
     files = metadata['files']
     if not files:
         raise ValueError('Empty remote manifest')
+    pending = []
     for name in files:
         relative_path(name)
         if allowed and not allowed(name):
             raise ValueError('Unexpected artifact in recovery manifest: ' + name)
-    with tempfile.TemporaryDirectory() as tmp:
-        listing = Path(tmp) / 'files.txt'
-        listing.write_text('\n'.join(files) + '\n', encoding='utf8')
-        drive.copy(remote, target, listing)
+        path = Path(target) / name
+        if not path.resolve().is_relative_to(Path(target).resolve()) or path.is_symlink():
+            raise ValueError('Unsafe staging target: ' + name)
+        if file_matches(path, files[name]):
+            continue
+        if path.exists():
+            if not path.is_file():
+                raise ValueError('Staging target is not a file: ' + name)
+            path.unlink()
+        pending.append(name)
+    if pending:
+        with tempfile.TemporaryDirectory() as tmp:
+            listing = Path(tmp) / 'files.txt'
+            listing.write_text('\n'.join(pending) + '\n', encoding='utf8')
+            drive.copy(remote, target, listing)
     for name, expected in files.items():
         path = Path(target) / name
-        if (not path.is_file() or path.is_symlink() or path.stat().st_size != expected['bytes']
-                or digest(path) != expected['sha256']):
+        if not file_matches(path, expected):
             raise ValueError('Recovery hash mismatch: ' + name)
+
+
+def file_matches(path, expected):
+    return (path.is_file() and not path.is_symlink()
+            and path.stat().st_size == expected['bytes']
+            and digest(path) == expected['sha256'])
 
 
 def base_path(dataset):
@@ -523,6 +559,25 @@ class Recovery:
             announce('BACKUP_VERIFIED', self.state['run_id'], 'slot', slot)
             return True
 
+    def restore_plan(self, metadata):
+        """Validate destinations before downloading and again before installation."""
+        pending, conflicts = [], []
+        for name, expected in metadata['files'].items():
+            relative = relative_path(name)
+            if not recovery_allowed(name, self.state['dataset']):
+                raise ValueError('Unexpected recovery artifact: ' + name)
+            target = WORK / name
+            if not target.resolve().is_relative_to(WORK.resolve()) or target.is_symlink():
+                raise ValueError('Unsafe restore target: ' + name)
+            if file_matches(target, expected):
+                continue
+            if target.exists():
+                if not target.is_file() or relative.parts[0] not in ('logs', 'provenance'):
+                    raise FileExistsError('Restore found different local run data before download: ' + str(target))
+                conflicts.append(name)
+            pending.append(name)
+        return pending, conflicts
+
     def restore(self):
         recovery = self.remote + '/recovery'
         self.drive.call('lsf', recovery, '--max-depth', '1', quiet=True)
@@ -531,36 +586,44 @@ class Recovery:
             try:
                 meta = self.drive.read_json(recovery + '/slot-' + str(slot) + '/READY.json')
                 candidates.append((meta['created_ns'], slot, meta))
-            except (RuntimeError, ValueError, KeyError):
+            except (RuntimeError, ValueError, KeyError, OSError):
                 pass
         for _, slot, meta in sorted(candidates, reverse=True):
             if (meta.get('dataset') != self.state['dataset'] or meta.get('run_id') != self.state['run_id']
-                    or meta.get('work') != str(WORK) or meta.get('source_commit') != revision()
+                    or meta.get('work') != str(WORK) or not compatible_source(meta.get('source_commit'))
                     or meta.get('variant') != RUN_VARIANT):
                 raise ValueError('Restore needs the same source commit, dataset and work root')
-            with tempfile.TemporaryDirectory(dir=WORK, prefix='.c1-restore-') as tmp:
-                staged = Path(tmp) / 'payload'
-                try:
-                    fetch_verified(self.drive, recovery + '/slot-' + str(slot), meta, staged,
+            if not any(n.endswith('/model-last.pth') for n in meta['files']):
+                raise ValueError('Snapshot has no resume checkpoint')
+            pending, _ = self.restore_plan(meta)
+            identity = hashlib.sha256(json.dumps(meta, sort_keys=True).encode()).hexdigest()
+            staged = WORK / '.c1-restore-cache' / self.state['run_id'] / identity
+            if not staged.resolve().is_relative_to(WORK.resolve()):
+                raise ValueError('Unsafe restore cache')
+            subset = dict(meta, files={name: meta['files'][name] for name in pending})
+            try:
+                if pending:
+                    fetch_verified(self.drive, recovery + '/slot-' + str(slot), subset, staged,
                                    lambda p: recovery_allowed(p, self.state['dataset']))
-                    if not any(n.endswith('/model-last.pth') for n in meta['files']):
-                        raise ValueError('Snapshot has no resume checkpoint')
-                except (RuntimeError, ValueError, OSError):
-                    announce('RESTORE_SLOT_INVALID', slot, 'trying older verified slot')
-                    continue
-                # Verify everything before making any run/prepared artifact visible.
-                for relative in meta['files']:
-                    target = WORK / relative
-                    if not target.resolve().is_relative_to(WORK.resolve()):
-                        raise ValueError('Symlink escapes work root')
-                    if target.exists():
-                        raise FileExistsError('Restore refuses to overwrite: ' + str(target))
-                for relative in meta['files']:
-                    target = WORK / relative
+            except (RuntimeError, ValueError, OSError):
+                announce('RESTORE_SLOT_INVALID', slot, 'trying older verified slot')
+                continue
+            remaining, conflicts = self.restore_plan(meta)
+            if not set(remaining).issubset(pending):
+                raise RuntimeError('Local files changed during restore; rerun to reuse the verified cache')
+            if conflicts:
+                saved = WORK / '.c1-local-conflicts' / uuid.uuid4().hex
+                for name in conflicts:
+                    target = saved / name
                     target.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.move(str(staged / relative), target)
-                announce('RESTORE_VERIFIED', self.state['run_id'], 'slot', slot)
-                return meta
+                    shutil.move(str(WORK / name), target)
+                announce('RESTORE_LOCAL_LOGS_PROVENANCE_SAVED', saved)
+            for name in remaining:
+                target = WORK / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(staged / name), target)
+            announce('RESTORE_VERIFIED', self.state['run_id'], 'slot', slot)
+            return meta
         raise FileNotFoundError('No complete, hash-valid recovery slot available')
 
 
@@ -597,9 +660,12 @@ def launch(args):
             raise FileNotFoundError('Restore the run first, or start a fresh run without flags')
         state = dict(dataset=args.dataset, run_id=time.strftime('%Y%m%dT%H%M%SZ', time.gmtime()) + '_' + uuid.uuid4().hex[:12],
                      source_commit=revision(), work=str(WORK), remote=args.remote, root=args.root, variant=RUN_VARIANT)
-    if (state['source_commit'] != revision() or state['remote'] != args.remote or state['root'] != args.root
+    if (not compatible_source(state['source_commit']) or state['remote'] != args.remote or state['root'] != args.root
             or state.get('variant','c1') != RUN_VARIANT):
         raise ValueError('Session source or Drive destination differs')
+    if state['source_commit'] != revision():
+        state['continued_from_source_commit'] = state['source_commit']
+        state['source_commit'] = revision()
     run = WORK / 'runs' / name
     if args.resume:
         if not (run / 'model-last.pth').is_file():
@@ -769,7 +835,10 @@ def main():
             raise FileExistsError('Restore on a fresh work root; local session state already exists')
         state = dict(dataset=args.dataset, run_id=args.run_id, work=str(WORK), source_commit=revision(),
                      remote=args.remote, root=args.root, status='RESTORED',variant=RUN_VARIANT)
-        Recovery(drive, state).restore()
+        restored = Recovery(drive, state).restore()
+        state['restored_from_source_commit'] = restored['source_commit']
+        state['restored_snapshot_created_ns'] = restored['created_ns']
+        state['restored_slot'] = restored['slot']
         write_json(session_path(args.dataset), state)
     else:
         state = json.loads(session_path(args.dataset).read_text())
