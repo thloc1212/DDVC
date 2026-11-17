@@ -88,7 +88,8 @@ class GPT2CaptionModel(nn.Module):
               output=self.model(inputs_embeds=input_emb,attention_mask=cap_mask,encoder_hidden_states=cross_emb, encoder_attention_mask=cross_mask)
         return output
 
-    def generate(self,hs, reference, others, clip_fram_feature, event_boxes=None, video_mask=None, event_scores=None, anchor_boxes=None):
+    def generate(self,hs, reference, others, clip_fram_feature, event_boxes=None, video_mask=None, event_scores=None, anchor_boxes=None,
+                 num_beams=None, output_scores=True, return_dict_in_generate=True):
         with torch.no_grad():
             prefix_emb = self.relu(self.fc1(hs))
             prefix_emb = self.fc2(prefix_emb)
@@ -98,10 +99,12 @@ class GPT2CaptionModel(nn.Module):
             attention_mask=torch.ones(seqNum_prefix_token.shape,dtype=torch.long,device=input_emb.device)
             if self.opt.add_cross_attention==False:
                 output = self.model.generate(inputs_embeds=input_emb,attention_mask=attention_mask,eos_token_id=self.tokenizer.encode(".")[0],pad_token_id=self.tokenizer.pad_token_id,
-                                                max_length=self.opt.max_caption_len, do_sample=False, num_beams=self.opt.gpt_beam_size,  return_dict_in_generate=True,  output_scores=True)
+                                                max_length=self.opt.max_caption_len, do_sample=False, num_beams=self.opt.gpt_beam_size if num_beams is None else num_beams,
+                                                return_dict_in_generate=return_dict_in_generate, output_scores=output_scores)
             else:
                 cross_emb, cross_mask = self.visual_context(hs, clip_fram_feature, event_boxes, video_mask, event_scores, anchor_boxes)
                 output = self.model.generate(inputs_embeds=input_emb,attention_mask=attention_mask,eos_token_id=self.tokenizer.encode(".")[0],pad_token_id=self.tokenizer.pad_token_id,encoder_hidden_states=cross_emb,
                                                 encoder_attention_mask=cross_mask,
-                                                max_length=self.opt.max_caption_len, do_sample=False, num_beams=self.opt.gpt_beam_size,  return_dict_in_generate=True,  output_scores=True)
+                                                max_length=self.opt.max_caption_len, do_sample=False, num_beams=self.opt.gpt_beam_size if num_beams is None else num_beams,
+                                                return_dict_in_generate=return_dict_in_generate, output_scores=output_scores)
             return output

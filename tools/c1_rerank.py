@@ -75,7 +75,7 @@ def alive(pid):
 class Backup:
     def __init__(self,transport,helpers,work,state):
         self.drive,self.helpers,self.work,self.state=transport,helpers,work,state
-        self.remote=transport.path('runs/prawn_content_mask_quality/'+state['dataset']+'/'+state['run_id'])
+        self.remote=transport.path('runs/prawn_caption_match_quality/'+state['dataset']+'/'+state['run_id'])
         self.lock=threading.Lock()
 
     def files(self):
@@ -140,7 +140,7 @@ def launch(args):
         base_state=args.base/'provenance'/('drive_session_'+args.dataset+'.json')
         if base_state.is_file():state['base_c1_drive_session']=json.loads(base_state.read_text(encoding='utf8'))
     transport,_=drive(args)
-    parent=transport.path('runs/prawn_content_mask_quality/'+args.dataset+'/'+state['run_id']);transport.call('mkdir',parent)
+    parent=transport.path('runs/prawn_caption_match_quality/'+args.dataset+'/'+state['run_id']);transport.call('mkdir',parent)
     logs=args.work/'logs';logs.mkdir(parents=True,exist_ok=True)
     state['status']='STARTING';atomic_json(path,state)
     command=[sys.executable,'-u',str(Path(__file__).resolve()),'worker',args.dataset,'--base',str(args.base),'--work',str(args.work)]
@@ -195,7 +195,7 @@ def restore(args):
     transport,helpers=drive(args)
     if not args.run_id or not re.fullmatch('[A-Za-z0-9_-]+',args.run_id):raise ValueError('Restore requires --run-id ID')
     if state_path(args.work,args.dataset).exists():raise FileExistsError('Restore into a fresh reranker work directory')
-    remote=transport.path('runs/prawn_content_mask_quality/'+args.dataset+'/'+args.run_id+'/recovery')
+    remote=transport.path('runs/prawn_caption_match_quality/'+args.dataset+'/'+args.run_id+'/recovery')
     candidates=[]
     for slot in (0,1):
         try:
@@ -225,7 +225,7 @@ def restore(args):
 
 
 def export(args):
-    target=args.work/('PRAWN_CONTENT_MASK_QUALITY_'+args.dataset+'_'+time.strftime('%Y%m%d_%H%M%S')+'.zip')
+    target=args.work/('PRAWN_CAPTION_MATCH_QUALITY_'+args.dataset+'_'+time.strftime('%Y%m%d_%H%M%S')+'.zip')
     with zipfile.ZipFile(target,'w',zipfile.ZIP_DEFLATED,compresslevel=3) as z:
         folder=args.work/'runs'/args.dataset
         for p in folder.rglob('*'):
@@ -237,7 +237,7 @@ def export(args):
         z.write(state_path(args.work,args.dataset),'provenance/session.json')
         for name in subprocess.check_output(['git','ls-files'],cwd=ROOT,text=True).splitlines():
             if Path(name).suffix in ('.py','.sh','.md','.json') and (ROOT/name).is_file():z.write(ROOT/name,'source/'+name)
-        z.writestr('EXPORT_MANIFEST.json',json.dumps(dict(method='PRAWN_CONTENT_MASK_FROZEN_QUALITY',dataset=args.dataset,
+        z.writestr('EXPORT_MANIFEST.json',json.dumps(dict(method='PRAWN_CAPTION_MATCH_FROZEN_QUALITY',dataset=args.dataset,
                     source_commit=revision(),base_C1_weights_included=False,small_ranker_weights_included=True,
                     validation_feature_cache_included=True,training_feature_cache_included=False)))
     announce('ZIP_READY',target)
@@ -246,7 +246,7 @@ def export(args):
 def main():
     parser=argparse.ArgumentParser(__doc__);parser.add_argument('command',choices=('start','worker','logs','status','backup','restore','export'))
     parser.add_argument('dataset',choices=('yc2','anet'));parser.add_argument('--work',type=Path,default=ROOT.parent)
-    parser.add_argument('--base',type=Path,default=Path('/marimo/DDVC_C1'));parser.add_argument('--resume',action='store_true')
+    parser.add_argument('--base',type=Path,default=ROOT.parent);parser.add_argument('--resume',action='store_true')
     parser.add_argument('--run-id');args=parser.parse_args();args.work=args.work.resolve();args.base=args.base.resolve()
     args.work.mkdir(parents=True,exist_ok=True)
     if args.command=='start':launch(args)

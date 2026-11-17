@@ -61,7 +61,7 @@ def worker(args):
     import fcntl
     with (WORK / 'logs' / (args.dataset + '.prawn.lock')).open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        print('PRAWN_RECIPE', args.dataset, 'content_conditioned_mask=True generator_seed=777 quality_seed=777 head_split_seed=777',
+        print('PRAWN_CAPTION_MATCH_RECIPE', args.dataset, 'content_conditioned_mask=True generator_seed=777 quality_seed=777 head_split_seed=777',
               'generator_epochs=' + ('15' if args.dataset == 'yc2' else '6'),
               'quality_epochs=20 quality_batch_videos=8 generator_batch=1 accumulation=1 beta=' + ('1' if args.dataset == 'yc2' else '6'), flush=True)
         state = read_state(state_path(args.dataset))
@@ -69,7 +69,7 @@ def worker(args):
             flags = []
             if args.resume and state:
                 epochs = 15 if args.dataset == 'yc2' else 6
-                checkpoint = WORK / 'runs' / f'{args.dataset}_content_mask_e{epochs}_b1' / 'model-last.pth'
+                checkpoint = WORK / 'runs' / f'{args.dataset}_caption_match_e{epochs}_b1' / 'model-last.pth'
                 flags = ['--resume' if checkpoint.is_file() else '--retry']
             command('c1_drive.sh', 'start', args.dataset, *flags)
             wait_stage(args.dataset)
@@ -115,7 +115,7 @@ def main():
         worker(args)
     elif args.command == 'logs':
         epochs = 15 if args.dataset == 'yc2' else 6
-        run = f'{args.dataset}_content_mask_e{epochs}_b1'
+        run = f'{args.dataset}_caption_match_e{epochs}_b1'
         logs = [WORK/'logs'/(args.dataset+'.prawn.chain.log'),
                 WORK/'logs'/(args.dataset+'.drive.log'),
                 WORK/'logs'/(run+'.launch.log'), WORK/'logs'/(run+'.log'),

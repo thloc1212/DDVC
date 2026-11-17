@@ -200,6 +200,8 @@ def train(opt):
                                          corrected=getattr(opt, 'corrected_query_contrastive', False))
         criterion.matcher.cost_cl = 0 if cl_weight == 0 else opt.set_cost_cl
         logger.info('Epoch %s effective loss weights: %s', epoch, weight_dict)
+        from misc.caption_matching import matching_weight
+        logger.info('MATCHING_SCHEDULE epoch=%d weight=%.6f', epoch, matching_weight(opt, epoch))
         saved_this_epoch, new_best = False, False
         epoch_start = time.time()
         if opt.device=='cuda':torch.cuda.reset_peak_memory_stats()
@@ -228,6 +230,7 @@ def train(opt):
                 dt['video_target']]
 
             dt = collections.defaultdict(lambda: None, dt)
+            dt['matching_epoch'] = epoch
 
             if opt.save_mode:
                 encoded_feature = model(dt, criterion, opt.transformer_input_type,save_mode=opt.save_mode)
@@ -264,6 +267,10 @@ def train(opt):
                 logger.info('PROGRESS epoch=%d/%d micro_batch=%d/%d optimizer_steps=%d loss=%.5f lr=%.8g elapsed_s=%.1f eta_epoch_s=%.1f',
                             epoch+1,opt.epoch,batch_index+1,len(train_loader),optimizer_steps,
                             final_loss.item(),optimizer.param_groups[0]['lr'],elapsed,eta)
+                stats=getattr(criterion.matcher,'caption_match_stats',None)
+                if stats and getattr(opt,'caption_match_enabled',False):
+                    logger.info('CAPTION_MATCH epoch=%d weight=%.4f reward_mean=%.4f reward_max=%.4f changed_pairs=%d/%d decode_s=%.3f',
+                        epoch,stats['weight'],stats['reward_mean'],stats['reward_max'],stats['changed_pairs'],stats['pairs'],stats['decode_seconds'])
 
             for loss_k,loss_v in loss.items():
                 loss_sum[loss_k] = loss_sum.get(loss_k, 0)+ loss_v.item()

@@ -20,6 +20,7 @@ from misc.detr_utils import box_ops
 from misc.detr_utils.misc import (inverse_sigmoid)
 
 from .matcher import build_matcher_cl
+from misc.caption_matching import matching_weight, load_idf, prepare_reward
 from .temporal_pooling import pool_temporal_segments
 from transformers.caption_targets import prepare_legacy_caption_targets
 
@@ -961,6 +962,9 @@ class CM2(nn.Module):
         if self.aux_loss:
             ks, vs = list(zip(*(all_out.items())))
             out['aux_outputs'] = [{ks[i]: vs[i][j] for i in range(len(ks))} for j in range(num_pred - 1)]
+            # Matching captions are free-running, generated without GT tokens.
+            self.add_caption_matching(out, dt, hs_cap[-1], outputs_coord[-1],
+                                      outputs_class[-1], init_reference if num_pred == 1 else inter_references[num_pred-2], others)
             loss, last_indices, aux_indices = criterion(out, dt['video_target'])
             for l_id in range(hs.shape[0]):
                 hs_lid = hs[l_id]
@@ -981,6 +985,8 @@ class CM2(nn.Module):
             out.update({'caption_probs': cap_probs, 'seq': seq})
 
         else:
+            self.add_caption_matching(out, dt, hs_cap[-1], outputs_coord[-1],
+                                      outputs_class[-1], init_reference if num_pred == 1 else inter_references[num_pred-2], others)
             loss, last_indices = criterion(out, dt['video_target'])
 
             l_id = hs.shape[0] - 1
@@ -1023,6 +1029,18 @@ class CM2(nn.Module):
         
         return out, loss
     
+    def add_caption_matching(self, out, dt, queries, boxes, logits, reference, others):
+        weight = matching_weight(self.opt, dt.get('matching_epoch', 0)) if self.training else 0.
+        if weight == 0:
+            return
+        if not hasattr(self, '_caption_matching_idf'):
+            self._caption_matching_idf = load_idf(self.opt)
+        context = mask_layer_context(others, logits, reference, boxes)
+        reward, seconds = prepare_reward(self.caption_head[-1], self.opt, dt, queries, boxes,
+            proposal_confidence(context), proposal_anchors(context), self._caption_matching_idf)
+        out.update(caption_match_reward=reward, caption_match_weight=weight,
+                   caption_match_decode_seconds=seconds)
+
     def caption_prediction(self, cap_head, dt, hs, reference, others, captioner_type, indices=None, event_boxes=None):
         N_, N_q, C = hs.shape
         all_cap_num = len(dt['cap_tensor'])

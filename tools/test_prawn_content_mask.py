@@ -45,7 +45,8 @@ class OriginalTests(unittest.TestCase):
 
     def test_recipe_changes_training_seed_and_preserves_method(self):
         for dataset, epochs, queries in [('yc2', 15, 50), ('anet', 6, 10)]:
-            cfg = c1_pipeline.make_config({}, Path('/marimo/PRAWN_Content_Mask'), dataset)
+            with patch.dict('os.environ', {'DDVC_MATCHING_WEIGHT': '.5'}):
+                cfg = c1_pipeline.make_config({}, Path('/marimo/PRAWN_Content_Mask'), dataset)
             self.assertEqual((cfg['seed'], cfg['epoch'], cfg['num_queries']), (777, epochs, queries))
             self.assertEqual((cfg['batch_size'], cfg['gradient_accumulation_steps']), (1, 1))
             self.assertEqual((cfg['precision'], cfg['allow_tf32']), ('fp32', False))
@@ -54,8 +55,12 @@ class OriginalTests(unittest.TestCase):
             self.assertTrue(cfg['proposal_mask_content_conditioned'])
             self.assertEqual(cfg['proposal_mask_content_dim'], 128)
             self.assertEqual(cfg['experiment_recipe'], 'prawn_content_mask')
-            self.assertEqual(cfg['id'], f'{dataset}_content_mask_e{epochs}_b1')
+            self.assertEqual(cfg['id'], f'{dataset}_caption_match_e{epochs}_b1')
             self.assertEqual(cfg['proposal_mask_loss_coef'], 0.)
+            self.assertTrue(cfg['caption_match_enabled'])
+            self.assertEqual(cfg['caption_match_weight'],.5)
+            self.assertEqual(cfg['caption_match_warmup_epochs'],2)
+            self.assertEqual(cfg['caption_match_ramp_epochs'],2)
             self.assertEqual(cfg['start_from'], '')
             self.assertIsNone(cfg['pretrain'])
         self.assertEqual((TRAINING_SEED, HEAD_SPLIT_SEED), (777, 777))

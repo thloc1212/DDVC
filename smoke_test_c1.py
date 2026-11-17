@@ -55,6 +55,15 @@ def check_preparation():
             path=cli.config_path(work,ds);actual=cli.check(path)
             assert actual['seed']==777
             assert actual['proposal_mask_loss_coef']==0 and 'concept_vocab_path' not in actual
+            matching_idf=json.loads(Path(actual['caption_match_idf_path']).read_text(encoding='utf8'))
+            assert matching_idf['source_split']=='train' and matching_idf['documents']==sizes[0]
+            assert matching_idf['annotation_sha256']==hashlib.sha256(Path(actual['train_caption_file']).read_bytes()).hexdigest()
+            idf_path=Path(actual['caption_match_idf_path']);idf_bytes=idf_path.read_bytes()
+            idf_path.write_text('{}',encoding='utf8')
+            try:cli.check(path)
+            except ValueError:pass
+            else:raise AssertionError('Modified matching IDF was accepted')
+            idf_path.write_bytes(idf_bytes)
             assert not list(path.parent.glob('*concept*'))
             assert Path(actual['train_caption_file']).read_bytes()==paths['train'].read_bytes()
             before=path.read_text(encoding='utf8')

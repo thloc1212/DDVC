@@ -361,6 +361,13 @@ def parse_opts(argv=None, write_options=True):
     parser.add_argument('--crop_num', type=int, default=2)
 
     # reranking
+    parser.add_argument('--caption_match_enabled', action='store_true', default=False)
+    parser.add_argument('--caption_match_weight', type=float, default=0.)
+    parser.add_argument('--caption_match_warmup_epochs', type=int, default=2)
+    parser.add_argument('--caption_match_ramp_epochs', type=int, default=2)
+    parser.add_argument('--caption_match_decode_chunk', type=int, default=4)
+    parser.add_argument('--caption_match_idf_path', type=str, default='')
+    parser.add_argument('--caption_match_idf_sha256', type=str, default='')
     parser.add_argument('--eval_selection_method', choices=['softnms'], default='softnms')
     parser.add_argument('--eval_softnms_sigma', type=float, default=.5)
     parser.add_argument('--ec_alpha', type=float, default=0.3)

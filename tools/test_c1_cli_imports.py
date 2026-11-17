@@ -16,7 +16,7 @@ class SafePathTests(unittest.TestCase):
         paths=env.get('PYTHONPATH','').split(os.pathsep)
         env['PYTHONPATH']=os.pathsep.join(p for p in paths if p and Path(p).resolve()!=TOOLS)
         with tempfile.TemporaryDirectory() as cwd:
-            for name in ('c1_diagnostics.py','c1_visual_probe.py','c1_pipeline.py'):
+            for name in ('c1_diagnostics.py','c1_visual_probe.py','c1_pipeline.py','caption_matching_smoke.py'):
                 with self.subTest(name=name):
                     result=subprocess.run([sys.executable,'-P','-B',str(TOOLS/name),'--help'],
                                           cwd=cwd,env=env,text=True,capture_output=True,timeout=60)

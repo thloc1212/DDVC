@@ -245,6 +245,21 @@ class HungarianMatcher_cl(nn.Module):
             C = self.cost_bbox * cost_bbox + self.cost_class * cost_class + self.cost_giou * cost_giou + self.cost_cl * cost_cl +self.cost_caption * cost_caption
             if self.opt is not None and self.opt.set_cost_caption > 0 and 'cap_cost_mat' in outputs:
                 C = C + self.opt.set_cost_caption * outputs['cap_cost_mat']
+            if 'caption_match_reward' in outputs:
+                from misc.caption_matching import add_joint_cost
+                if bs != 1:
+                    raise ValueError('Caption matching requires batch 1')
+                original = C.detach().cpu().numpy()
+                before = linear_sum_assignment(original)
+                C = add_joint_cost(C, outputs['caption_match_reward'].flatten(0, 1),
+                                   float(outputs['caption_match_weight']))
+                after = linear_sum_assignment(C.detach().cpu().numpy())
+                prior = dict(zip(*before))
+                reward = outputs['caption_match_reward']
+                self.caption_match_stats = dict(weight=float(outputs['caption_match_weight']),
+                    reward_mean=float(reward.mean()), reward_max=float(reward.max()),
+                    changed_pairs=sum(prior.get(int(i)) != int(j) for i, j in zip(*after)),
+                    pairs=len(after[0]), decode_seconds=float(outputs['caption_match_decode_seconds']))
             costs = {'cost_bbox': cost_bbox,
                      'cost_class': cost_class,
                      'cost_giou': cost_giou,
