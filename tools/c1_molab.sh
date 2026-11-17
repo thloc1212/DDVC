@@ -8,7 +8,7 @@ PY=${DDVC_PYTHON:-/tmp/uv-venv/bin/python}
 COMMAND=${1:-help}
 DATASET=${2:-yc2}
 case "$DATASET" in yc2) EPOCHS=15;; anet) EPOCHS=6;; *) echo 'Dataset must be yc2 or anet'; exit 2;; esac
-RUN=${DATASET}_c1_e${EPOCHS}_b1
+RUN=${DATASET}_content_mask_e${EPOCHS}_b1
 export CUDA_VISIBLE_DEVICES=${DDVC_GPU:-0} TOKENIZERS_PARALLELISM=false PYTHONUNBUFFERED=1 MPLBACKEND=Agg LC_ALL=C LANG=C
 export PYTHONPATH="$REPO/tools:$REPO:$REPO/ddvc/ops${PYTHONPATH:+:$PYTHONPATH}"
 export HF_HOME=${DDVC_HF_HOME:-$WORK/hf-cache}
@@ -27,9 +27,11 @@ case "$COMMAND" in
    "$PY" tools/molab_pipeline.py patch
    logged tokenizer "$PY" tools/prepare_gpt2_tokenizer.py
    logged cpu_c1 "$PY" smoke_test_c1.py
+   logged content_mask_tests "$PY" tools/test_content_proposal_mask.py
+   logged quality_tests "$PY" tools/test_c1_rerank.py
    logged drive_tests "$PY" tools/test_c1_rclone.py
    logged cli_imports "$PY" tools/test_c1_cli_imports.py
-   logged original_recipe_tests "$PY" tools/test_prawn_original.py
+   logged content_recipe_tests "$PY" tools/test_prawn_content_mask.py
    logged caption_targets "$PY" smoke_test_caption_targets.py --gpt2
    logged java "$PY" -u tools/molab_pipeline.py java --target "$WORK/tools/java"
    if [[ $("$PY" -c 'import torch; print(torch.version.cuda)') == 13.0 ]]; then

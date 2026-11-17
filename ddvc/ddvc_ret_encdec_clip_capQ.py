@@ -697,7 +697,8 @@ class CM2(nn.Module):
                 last_reference = init_reference if hs.shape[0] == 1 else inter_references[hs.shape[0]-2]
                 context = mask_layer_context(others, out['pred_logits'], last_reference, out['pred_boxes'])
                 loss.update(self.caption_head[-1].proposal_mask.objective(
-                    out['pred_boxes'][0], dt['video_mask'], proposal_confidence(context), proposal_anchors(context)))
+                    out['pred_boxes'][0], dt['video_mask'], proposal_confidence(context), proposal_anchors(context),
+                    event_queries=hs_cap[-1, 0], visual_features=dt['video_tensor']))
             return out, loss
         else:
             return memory

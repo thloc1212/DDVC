@@ -58,7 +58,8 @@ def check_preparation():
             assert not list(path.parent.glob('*concept*'))
             assert Path(actual['train_caption_file']).read_bytes()==paths['train'].read_bytes()
             before=path.read_text(encoding='utf8')
-            for key,value in [('proposal_mask_loss_coef',1.),('event_concepts',True),('eval_merge_duplicates',True)]:
+            for key,value in [('proposal_mask_loss_coef',1.),('event_concepts',True),('eval_merge_duplicates',True),
+                              ('proposal_mask_content_conditioned',False)]:
                 bad=dict(actual);bad[key]=value;path.write_text(yaml.safe_dump(bad),encoding='utf8')
                 try:cli.check(path)
                 except ValueError:pass
@@ -85,6 +86,7 @@ def check_caption(legacy_ref=None):
     try:
         opt=SimpleNamespace(hidden_dim=512,device='cpu',gpt_layer=1,add_cross_attention=True,
                             learned_proposal_mask=True,proposal_mask_bins=64,proposal_mask_encoding_dim=128,
+                            proposal_mask_content_conditioned=True,proposal_mask_content_dim=128,
                             local_visual_attention=False,event_concepts=False,max_caption_len=6,gpt_beam_size=2)
         torch.manual_seed(777);head=gpt2.GPT2CaptionModel(opt)
         assert not any('event_concepts' in k for k in head.state_dict())
@@ -97,7 +99,8 @@ def check_caption(legacy_ref=None):
         kwargs=dict(event_boxes=boxes,video_mask=valid,event_scores=confidence,anchor_boxes=boxes.detach())
         args=(queries,labels,torch.ones_like(labels),{},labels,features)
         output=head(*args,**kwargs)
-        mask_loss=head.proposal_mask.objective(boxes,valid,confidence,boxes.detach())['loss_proposal_mask']
+        mask_loss=head.proposal_mask.objective(boxes,valid,confidence,boxes.detach(),
+            event_queries=queries[:,0],visual_features=features)['loss_proposal_mask']
         total=output.loss+0*mask_loss
         total.backward()
         assert torch.isfinite(total)

@@ -1,4 +1,4 @@
-"""Historical C1 model/recipe: YouCook2 15 epochs, ANET 6 epochs by request."""
+"""Content-conditioned PRAWN mask: YouCook2 15 epochs, ANET 6 epochs by request."""
 import argparse
 import copy
 import hashlib
@@ -45,7 +45,7 @@ def epochs(dataset):
 
 
 def run_name(dataset):
-    return f'{dataset}_c1_e{epochs(dataset)}_b1'
+    return f'{dataset}_content_mask_e{epochs(dataset)}_b1'
 
 
 def config_path(work, dataset):
@@ -103,7 +103,7 @@ def make_config(base, work, dataset):
     cfg.update(seed=777,id=name,exp_name=name,fixed_run_id=True,cfg_path='',save_dir=str(Path(work)/'runs'),
                epoch=epochs(dataset),start_from='',start_from_mode='last',pretrain=None,
                only_ft_captioner=False,only_ft_class_head=False,training_scheme='all',
-               experiment_recipe='stable_c1',selection_experiment='softnms',
+               experiment_recipe='prawn_content_mask',selection_experiment='softnms',
                min_epoch_when_save=0,save_checkpoint_every=1,save_all_checkpoint=False)
     cfg.pop('current_lr',None)
     validate_method(cfg)
@@ -161,9 +161,9 @@ def prepare(args):
     shared.update(str(p) for p in (target/'bank').rglob('*.npy'))
     manifest=dict(expected_config=cfg,source_config=str(source),source_sha256=sha(source),
                   source_commit=helper('molab_pipeline').revision(),ablation_base_commit=BASE_COMMIT,
-                  dataset=args.dataset,case='C1',input_sha256=inputs,
+                  dataset=args.dataset,case='PRAWN_content_mask',input_sha256=inputs,
                   shared_file_sha256={p:sha(p) for p in sorted(shared)},
-                  note='Same C1 method/recipe. Assets copied byte-for-byte; fresh model and optimizer.')
+                  note='Content-conditioned soft mask. Original PRAWN training recipe and byte-identical data; fresh model and optimizer.')
     dump(target/'c1_manifest.json',manifest)
     path.write_text(yaml.safe_dump(cfg,sort_keys=False),encoding='utf8')
     make_smoke(cfg,target);check(path)
@@ -201,7 +201,8 @@ def check(path, require_features=True):
     if require_features:
         for p in cfg['visual_feature_folder']:
             if not Path(p).is_file():raise FileNotFoundError(p)
-    print('C1_OK',ds,len(train),'train',len(val),'val;',cfg['epoch'],'epochs; mask loss 0; Soft-NMS only',flush=True)
+    print('PRAWN_CONTENT_MASK_OK',ds,len(train),'train',len(val),'val;',cfg['epoch'],
+          'epochs; query + visual residual; mask loss 0; Soft-NMS only',flush=True)
     return cfg
 
 
@@ -286,7 +287,7 @@ def restage(args):
 
 
 def export(args):
-    args.work=args.work.resolve();target=args.work/f'C1_ANALYSIS_{args.dataset}_{time.strftime("%Y%m%d_%H%M%S")}.zip'
+    args.work=args.work.resolve();target=args.work/f'PRAWN_CONTENT_MASK_GENERATOR_{args.dataset}_{time.strftime("%Y%m%d_%H%M%S")}.zip'
     extensions={'.json','.jsonl','.yml','.yaml','.log','.txt','.tsv','.csv'}
     with zipfile.ZipFile(target,'w',zipfile.ZIP_DEFLATED,compresslevel=3) as z:
         for name in ('runs','prepared','logs','provenance'):
@@ -297,7 +298,7 @@ def export(args):
         for relative in tracked:
             p=ROOT/relative
             if p.is_file() and p.suffix in {'.py','.sh','.md','.txt','.json'}:z.write(p,'source/'+relative)
-        z.writestr('EXPORT_MANIFEST.json',json.dumps(dict(dataset=args.dataset,method='C1',
+        z.writestr('EXPORT_MANIFEST.json',json.dumps(dict(dataset=args.dataset,method='PRAWN_CONTENT_MASK_GENERATOR',
              source_commit=helper('molab_pipeline').revision(),checkpoint_weights=False)))
     print('ZIP_READY',target,flush=True)
 

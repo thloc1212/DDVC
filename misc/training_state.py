@@ -95,6 +95,7 @@ def validate_resume(config, previous):
     keys = ('hidden_dim', 'num_queries', 'gpt_layer', 'dec_layers', 'enc_layers',
             'learned_proposal_mask', 'proposal_mask_bins',
             'proposal_mask_encoding_dim', 'mask_target',
+            'proposal_mask_content_conditioned', 'proposal_mask_content_dim',
             'mask_gate_min', 'mask_gate_max', 'mask_context_ratio', 'mask_min_frames',
             'mask_prune_threshold', 'mask_balanced_bce', 'proposal_mask_loss_coef',
             'corrected_query_contrastive', 'seed', 'epoch', 'lr', 'optimizer_type',

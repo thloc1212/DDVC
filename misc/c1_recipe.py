@@ -1,9 +1,10 @@
-"""Historical C1, with no QTS, event-set, concepts or mask auxiliary objective."""
+"""PRAWN content-aware mask experiment, retaining the original two-stage recipe."""
 from misc.c2_recipe import clean_legacy_metadata, RETIRED_ENABLED
 
 BASE_COMMIT = 'ed5494c9dce7371ea30683a3e8a5320ccc19b2a7'
 METHOD = dict(learned_proposal_mask=True, proposal_mask_loss_coef=0.0,
               proposal_mask_bins=64, proposal_mask_encoding_dim=128,
+              proposal_mask_content_conditioned=True, proposal_mask_content_dim=128,
               add_cross_attention=True, eval_selection_method='softnms', eval_softnms_sigma=.5)
 
 
@@ -24,7 +25,7 @@ def validate_method(config):
 
 
 def validate_training_method(config):
-    if config.get('experiment_recipe') == 'stable_c1':
+    if config.get('experiment_recipe') in ('stable_c1', 'prawn_content_mask'):
         return validate_method(config)
     from misc.c2_recipe import validate_method as validate_c2
     return validate_c2(config)

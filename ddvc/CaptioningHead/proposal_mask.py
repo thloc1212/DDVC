@@ -60,7 +60,8 @@ def hard_window(boxes, positions):
 
 
 class LearnedGatedProposalMask(nn.Module):
-    def __init__(self, bins=64, encoding_dim=128):
+    def __init__(self, bins=64, encoding_dim=128, content_conditioned=False,
+                 query_dim=512, visual_dim=768, content_dim=128):
         super().__init__()
         if bins < 2 or encoding_dim < 8 or encoding_dim % 8:
             raise ValueError('bins >= 2 and encoding_dim divisible by 8 are required')
@@ -69,6 +70,34 @@ class LearnedGatedProposalMask(nn.Module):
         self.mask_model = nn.Sequential(
             nn.Linear(encoding_dim + bins, encoding_dim, bias=False),
             nn.LayerNorm(encoding_dim), nn.ReLU(), nn.Linear(encoding_dim, bins))
+        self.content_conditioned = content_conditioned
+        self.query_dim, self.visual_dim = query_dim, visual_dim
+        if content_conditioned:
+            self.query_project = nn.Sequential(nn.Linear(query_dim, content_dim), nn.LayerNorm(content_dim))
+            self.visual_project = nn.Sequential(nn.Linear(visual_dim, content_dim), nn.LayerNorm(content_dim))
+            # Relative position and normalized duration preserve temporal information.
+            self.relative_project = nn.Linear(2, content_dim, bias=False)
+            self.content_output = nn.Linear(content_dim, 1)
+            # Exactly recover the geometry-only mask at initialization. These weights
+            # learn first, then open gradients to the content projections.
+            nn.init.zeros_(self.content_output.weight)
+            nn.init.zeros_(self.content_output.bias)
+
+    def content_logits(self, boxes, positions, valid, event_queries, visual_features):
+        if event_queries is None or event_queries.shape != (len(boxes), self.query_dim):
+            raise ValueError('Content mask needs aligned event queries [events, query_dim]')
+        if visual_features is None or visual_features.shape != (1, valid.numel(), self.visual_dim):
+            raise ValueError('Content mask needs original CLIP features [1, frames, visual_dim]')
+        # Frozen source features, trainable projections. Select real steps BEFORE
+        # projecting, so padding cannot influence outputs or parameter gradients.
+        visual = visual_features.detach()[0, valid]
+        if not torch.isfinite(visual).all() or not torch.isfinite(event_queries).all():
+            raise ValueError('Non-finite content mask inputs')
+        relative = (positions - boxes[:, :1]) / boxes[:, 1:].clamp_min(1e-4)
+        geometry = torch.stack((relative.clamp(-4, 4), boxes[:, 1:].expand_as(relative)), -1)
+        hidden = (self.query_project(event_queries)[:, None, :]
+                  + self.visual_project(visual)[None, :, :] + self.relative_project(geometry))
+        return self.content_output(torch.tanh(hidden)).squeeze(-1)
 
     def position_encoding(self, coordinates):
         channels = self.encoding_dim // 4
@@ -77,7 +106,8 @@ class LearnedGatedProposalMask(nn.Module):
         phase = coordinates.float().unsqueeze(-1) * self.bins / frequency
         return torch.where(index % 2 == 0, phase.sin(), phase.cos()).flatten(1)
 
-    def forward(self, boxes, valid_frames, event_scores, anchor_boxes=None):
+    def forward(self, boxes, valid_frames, event_scores, anchor_boxes=None,
+                event_queries=None, visual_features=None):
         if boxes.ndim != 2 or boxes.shape[-1] != 2 or len(boxes) == 0:
             raise ValueError('Expected nonempty [events, 2] predicted center/duration')
         if valid_frames.ndim != 2 or valid_frames.shape[0] != 1:
@@ -100,9 +130,12 @@ class LearnedGatedProposalMask(nn.Module):
         grid_logits = self.mask_model(torch.cat((encoded, anchor_mask), -1))
         # Interpolate only along real frame positions; padding never changes a mask.
         local_logits = F.interpolate(grid_logits[:, None], size=length, mode='linear', align_corners=False)[:, 0]
+        positions = (torch.arange(length, device=boxes.device).float() + .5)[None] / length
+        if self.content_conditioned:
+            local_logits = local_logits + self.content_logits(
+                boxes, positions, valid, event_queries, visual_features)
         logits = local_logits.new_zeros((len(boxes), valid.numel()))
         logits[:, valid] = local_logits
-        positions = (torch.arange(length, device=boxes.device).float() + .5)[None] / length
         hard = torch.zeros_like(logits)
         hard[:, valid] = hard_window(boxes, positions).to(logits.dtype)
         soft = logits.sigmoid() * valid
@@ -110,8 +143,9 @@ class LearnedGatedProposalMask(nn.Module):
         weights = (gate * hard + (1 - gate) * soft) * valid
         return {'weights': weights, 'logits': logits, 'hard': hard, 'gate': gate}
 
-    def objective(self, boxes, valid_frames, event_scores, anchor_boxes=None):
-        details = self(boxes, valid_frames, event_scores, anchor_boxes)
+    def objective(self, boxes, valid_frames, event_scores, anchor_boxes=None,
+                  event_queries=None, visual_features=None):
+        details = self(boxes, valid_frames, event_scores, anchor_boxes, event_queries, visual_features)
         valid = valid_frames.to(boxes.device).bool().expand_as(details['logits'])
         # Match upstream's detached predicted binary-window target, not GT masks.
         loss = F.binary_cross_entropy_with_logits(details['logits'][valid], details['hard'][valid])

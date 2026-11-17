@@ -39,7 +39,10 @@ class GPT2CaptionModel(nn.Module):
         self.model = GPT2LMHeadModel(configuration)
         with torch.random.fork_rng(devices=[]):
             torch.default_generator.manual_seed(1731)
-            self.proposal_mask = LearnedGatedProposalMask(opt.proposal_mask_bins, opt.proposal_mask_encoding_dim)
+            self.proposal_mask = LearnedGatedProposalMask(
+                opt.proposal_mask_bins, opt.proposal_mask_encoding_dim,
+                content_conditioned=getattr(opt, 'proposal_mask_content_conditioned', False),
+                query_dim=opt.hidden_dim, content_dim=getattr(opt, 'proposal_mask_content_dim', 128))
 
         self.prefix_token=self.tokenizer("<|endoftext|>",return_tensors="pt")["input_ids"].to(opt.device)
 
@@ -59,7 +62,8 @@ class GPT2CaptionModel(nn.Module):
             video_mask = torch.ones(1, cross_emb.shape[1], device=cross_emb.device, dtype=torch.bool)
         if event_boxes is None or len(event_boxes) != hs.shape[0]:
             raise ValueError('Learned masks need one interval per caption query')
-        details = self.proposal_mask(event_boxes, video_mask, event_scores, anchor_boxes)
+        details = self.proposal_mask(event_boxes, video_mask, event_scores, anchor_boxes,
+                                     event_queries=hs[:, 0], visual_features=clip_frame_feature)
         # Detach frozen CLIP features BEFORE gating, preserving all mask gradients.
         cross_emb = (cross_emb * details['weights'].unsqueeze(-1)).contiguous()
         mask = video_mask.to(device=cross_emb.device, dtype=torch.bool).expand(hs.shape[0], -1)

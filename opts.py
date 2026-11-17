@@ -138,6 +138,8 @@ def parse_opts(argv=None, write_options=True):
     parser.add_argument('--learned_proposal_mask', action='store_true', default=True)
     parser.add_argument('--proposal_mask_bins', type=int, default=64)
     parser.add_argument('--proposal_mask_encoding_dim', type=int, default=128)
+    parser.add_argument('--proposal_mask_content_conditioned', action='store_true', default=False)
+    parser.add_argument('--proposal_mask_content_dim', type=int, default=128)
     parser.add_argument('--proposal_mask_loss_coef', type=float, default=1.0)
     parser.add_argument('--mask_query_conditioning', action='store_true', default=False)
     parser.add_argument('--mask_target', choices=['predicted', 'matched_gt'], default='predicted')
