@@ -94,12 +94,18 @@ class MaskTests(unittest.TestCase):
         padded[5] = torch.cat((args[5], torch.full((1, 4, 768), float('nan'))), 1)
         actual = module(*padded)
         for key in ('logits', 'hard', 'weights'):
-            # Sigmoid kernels can differ in the last bit with different padded widths.
-            torch.testing.assert_close(before[key], actual[key][:, :9], rtol=0, atol=1e-7)
+            # FP32 GEMM/sigmoid kernels can round differently when event/padded
+            # dimensions change across PyTorch builds. Keep exact padding zeros,
+            # but allow normal FP32 rounding on the valid continuous outputs.
+            torch.testing.assert_close(before[key], actual[key][:, :9], rtol=1e-5, atol=1e-6)
             self.assertTrue(torch.equal(actual[key][:, 9:], torch.zeros(3, 4)), key)
         ids = torch.tensor([2, 0, 2, 1, 0, 1])
         repeated = [args[0][ids], args[1], args[2][ids], args[3][ids], args[4][ids], args[5]]
-        torch.testing.assert_close(module(*repeated)['weights'], before['weights'][ids], rtol=0, atol=1e-7)
+        repeated_weights = module(*repeated)['weights']
+        torch.testing.assert_close(repeated_weights, before['weights'][ids], rtol=1e-5, atol=1e-6)
+        # The tolerance must still reject an actual event/query alignment error.
+        with self.assertRaises(AssertionError):
+            torch.testing.assert_close(repeated_weights, before['weights'][ids.roll(1)], rtol=1e-5, atol=1e-6)
         # Matched E can be one, raw E is the full query budget.
         one = [args[0][:1], args[1], args[2][:1], args[3][:1], args[4][:1], args[5]]
         self.assertEqual(module(*one)['weights'].shape, (1, 9))

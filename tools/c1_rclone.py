@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT.parent
 DATA_PROTOCOL = 'c1-base-assets-v1'
 RUN_VARIANT = 'prawn-content-mask-b1'
+SETUP_TEST_FIX_SOURCE = '3c564ee994ddc980d29f6acc4b07b8d97ae9ab24'
 TEXT = {'.json', '.jsonl', '.yml', '.yaml', '.log', '.txt', '.tsv', '.csv'}
 
 
@@ -558,6 +559,32 @@ def alive(pid):
         return False
 
 
+def compatible_setup_retry(state, current, run, retry):
+    """Permit the v1 FP32 test fix only before a generator run was created.
+
+    Existing checkpoints keep the strict same-source rule. Preserve the failed
+    setup provenance rather than rewriting it silently or deleting run state.
+    """
+    if state['source_commit'] == current:
+        return state
+    if (not retry or state['source_commit'] != SETUP_TEST_FIX_SOURCE
+            or state.get('status') != 'FAILED_BACKUP_PENDING'
+            or state.get('variant') != RUN_VARIANT or Path(run).exists()):
+        raise ValueError('Source changed; only the v1 failed setup test may migrate before training')
+    allowed = {'tools/test_content_proposal_mask.py', 'tools/c1_rclone.py',
+               'tools/test_prawn_content_mask.py', 'PRAWN_CONTENT_MASK_MOLAB.md'}
+    changed = set(subprocess.check_output(
+        ['git', 'diff', '--name-only', state['source_commit'], current], cwd=ROOT, text=True).splitlines())
+    if not changed or not changed.issubset(allowed):
+        raise ValueError('Setup retry refuses model/training/data source changes')
+    updated = dict(state)
+    updated['source_history'] = list(state.get('source_history', [])) + [
+        dict(source_commit=state['source_commit'], reason='v1 setup FP32 tolerance fix; no generator run existed')]
+    updated['source_commit'] = current
+    announce('SETUP_TEST_FIX_MIGRATED', state['run_id'], 'no generator checkpoint or run existed')
+    return updated
+
+
 def launch(args):
     gpu_preflight()
     state_file = session_path(args.dataset)
@@ -573,9 +600,10 @@ def launch(args):
             raise FileNotFoundError('Restore the run first, or start a fresh run without flags')
         state = dict(dataset=args.dataset, run_id=time.strftime('%Y%m%dT%H%M%SZ', time.gmtime()) + '_' + uuid.uuid4().hex[:12],
                      source_commit=revision(), work=str(WORK), remote=args.remote, root=args.root, variant=RUN_VARIANT)
-    if (state['source_commit'] != revision() or state['remote'] != args.remote or state['root'] != args.root):
-        raise ValueError('Session source or Drive destination differs')
+    if state['remote'] != args.remote or state['root'] != args.root:
+        raise ValueError('Session Drive destination differs')
     run = WORK / 'runs' / name
+    state = compatible_setup_retry(state, revision(), run, args.retry)
     if args.resume:
         if not (run / 'model-last.pth').is_file():
             raise FileNotFoundError('Resume needs a restored model-last.pth')

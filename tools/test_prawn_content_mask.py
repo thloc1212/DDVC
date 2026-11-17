@@ -20,6 +20,29 @@ from test_c1_rclone import FileDrive, q
 
 
 class OriginalTests(unittest.TestCase):
+    def test_failed_v1_setup_can_migrate_but_trained_or_changed_model_cannot(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            run = Path(temporary) / 'run'
+            state = dict(source_commit=q.SETUP_TEST_FIX_SOURCE, run_id='failed-v1',
+                         status='FAILED_BACKUP_PENDING', variant=q.RUN_VARIANT)
+            changes = 'tools/test_content_proposal_mask.py\ntools/c1_rclone.py\n'
+            with patch.object(q.subprocess, 'check_output', return_value=changes):
+                updated = q.compatible_setup_retry(state, 'fixed-source', run, True)
+                self.assertEqual(updated['source_commit'], 'fixed-source')
+                self.assertEqual(state['source_commit'], q.SETUP_TEST_FIX_SOURCE)
+                self.assertEqual(updated['source_history'][0]['source_commit'], q.SETUP_TEST_FIX_SOURCE)
+                for override in (dict(status='TRAINING'), dict(source_commit='unrelated'), dict(variant='other')):
+                    with self.assertRaises(ValueError):
+                        q.compatible_setup_retry(dict(state, **override), 'fixed-source', run, True)
+                with self.assertRaises(ValueError):
+                    q.compatible_setup_retry(state, 'fixed-source', run, False)
+                run.mkdir()
+                with self.assertRaises(ValueError):
+                    q.compatible_setup_retry(state, 'fixed-source', run, True)
+            with patch.object(q.subprocess, 'check_output', return_value='ddvc/CaptioningHead/proposal_mask.py\n'):
+                with self.assertRaises(ValueError):
+                    q.compatible_setup_retry(state, 'fixed-source', Path(temporary)/'unused', True)
+
     def test_recipe_changes_training_seed_and_preserves_method(self):
         for dataset, epochs, queries in [('yc2', 15, 50), ('anet', 6, 10)]:
             cfg = c1_pipeline.make_config({}, Path('/marimo/PRAWN_Content_Mask'), dataset)

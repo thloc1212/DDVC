@@ -1,7 +1,34 @@
 # PRAWN: content-conditioned proposal mask experiment
 
-Fixed release: `prawn-content-mask-20261117-v1`.
+Fixed release: `prawn-content-mask-20261117-v2`.
 Parent: original two-stage PRAWN, commit `08d024eb07e7ef419458049905d9bad03a3597e2`.
+
+## Fix an existing v1 setup failure
+
+Release v2 corrects FP32 test tolerances for different event/padded tensor sizes.
+The generator, mask, losses, quality architecture and training recipe are
+unchanged. The old 1e-7 tolerance could reject a normal FP32 difference of
+1.1920928955078125e-7 on Molab's PyTorch build.
+
+For an existing v1 run stopped at setup with `FAILED_BACKUP_PENDING`, use:
+
+```bash
+bash <<'BASH'
+set -euo pipefail
+export LC_ALL=C LANG=C
+DATASET=yc2
+git -C /marimo/PRAWN_Content_Mask/source fetch origin tag prawn-content-mask-20261117-v2
+git -C /marimo/PRAWN_Content_Mask/source checkout --detach prawn-content-mask-20261117-v2
+bash /marimo/PRAWN_Content_Mask/source/tools/prawn_content_mask.sh resume "$DATASET"
+bash /marimo/PRAWN_Content_Mask/source/tools/prawn_content_mask.sh logs "$DATASET"
+BASH
+```
+
+Set `DATASET=anet` on the ANET account. No cloning or deleting folders is needed.
+The retry checks that no generator run exists, verifies the source diff is
+limited to tests, retry handling and this document, and records the original
+source in `source_history`. Runs with existing checkpoints are not migrated.
+The ordinary strict same-source rule still applies to those runs.
 
 ## What changes
 
@@ -92,7 +119,7 @@ bash <<'BASH'
 set -euo pipefail
 export LC_ALL=C LANG=C
 test -f /marimo/KLTN_DRIVE_PRIVATE.env
-git clone --single-branch --branch prawn-content-mask-20261117-v1 \
+git clone --single-branch --branch prawn-content-mask-20261117-v2 \
   https://github.com/thloc1212/DDVC.git /marimo/PRAWN_Content_Mask/source
 bash /marimo/PRAWN_Content_Mask/source/tools/prawn_content_mask.sh start yc2
 bash /marimo/PRAWN_Content_Mask/source/tools/prawn_content_mask.sh logs yc2
@@ -106,7 +133,7 @@ bash <<'BASH'
 set -euo pipefail
 export LC_ALL=C LANG=C
 test -f /marimo/KLTN_DRIVE_PRIVATE.env
-git clone --single-branch --branch prawn-content-mask-20261117-v1 \
+git clone --single-branch --branch prawn-content-mask-20261117-v2 \
   https://github.com/thloc1212/DDVC.git /marimo/PRAWN_Content_Mask/source
 bash /marimo/PRAWN_Content_Mask/source/tools/prawn_content_mask.sh start anet
 bash /marimo/PRAWN_Content_Mask/source/tools/prawn_content_mask.sh logs anet
