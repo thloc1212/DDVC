@@ -45,7 +45,8 @@ def epochs(dataset):
 
 
 def run_name(dataset):
-    return f'{dataset}_caption_match_e{epochs(dataset)}_b1'
+    from misc.prawn_ablation import run_name as profile_run_name
+    return profile_run_name(dataset)
 
 
 def config_path(work, dataset):
@@ -112,7 +113,10 @@ def make_config(base, work, dataset):
     cfg.update(caption_match_enabled=True,caption_match_weight=weight,
                caption_match_warmup_epochs=2,caption_match_ramp_epochs=2,caption_match_decode_chunk=4,
                matching_experiment='joint-time-idf-final-layer-v1')
+    from misc.prawn_ablation import configure, validate
+    configure(cfg)
     validate_method(cfg)
+    if cfg.get('prawn_ablation_variant'): validate(cfg)
     return cfg
 
 
@@ -121,6 +125,10 @@ def make_smoke(cfg, target):
     folder=target/'smoke';folder.mkdir(parents=True,exist_ok=True)
     for key in ('train_caption_file','val_caption_file'):
         rows=json.loads(Path(cfg[key]).read_text(encoding='utf8'))
+        if key == 'train_caption_file' and cfg.get('online_quality'):
+            from reranking.online import partition
+            fit, _ = partition(rows)
+            rows = {v: rows[v] for v in fit[:2]}
         path=folder/(key+'.json');dump(path,{k:rows[k] for k in list(rows)[:2]});tiny[key]=str(path)
     ids=set(json.loads(Path(tiny['val_caption_file']).read_text(encoding='utf8')))
     for key in ('gt_file_for_eval','gt_file_for_para_eval'):
@@ -168,6 +176,7 @@ def prepare(args):
     idf.update(source_split='train',annotation_sha256=sha(cfg['train_caption_file']))
     idf_path=target/'matching_train_idf.json';dump(idf_path,idf)
     cfg.update(caption_match_idf_path=str(idf_path),caption_match_idf_sha256=sha(idf_path))
+    if cfg.get('online_quality'): cfg['quality_annotation_file'] = cfg['train_caption_file']
     inputs={key:sha(cfg[key]) for key in ('train_caption_file','val_caption_file','dict_file','caption_match_idf_path')}
     shared=set(cfg['gt_file_for_eval']+cfg['gt_file_for_para_eval'])
     shared.update(str(p) for p in (target/'bank').rglob('*.npy'))
@@ -189,6 +198,11 @@ def check(path, require_features=True):
     if {k:v for k,v in cfg.items() if k not in mutable}!={k:v for k,v in expected.items() if k not in mutable}:
         raise ValueError('C1 config drift: '+str(path))
     ds=manifest['dataset']
+    if cfg.get('prawn_ablation_variant'):
+        from misc.prawn_ablation import validate
+        validate(cfg)
+        if cfg.get('online_quality') and sha(cfg['quality_annotation_file']) != sha(cfg['train_caption_file']):
+            raise ValueError('Joint quality labels must use TRAIN only')
     if (not cfg.get('caption_match_enabled') or not 0 <= cfg.get('caption_match_weight',-1) <= 2
             or cfg.get('caption_match_warmup_epochs')!=2 or cfg.get('caption_match_ramp_epochs')!=2
             or cfg.get('caption_match_decode_chunk')!=4):
@@ -233,6 +247,7 @@ def fingerprint(path):
            'ddvc/CaptioningHead/proposal_mask.py','misc/proposal_selection.py',
            'misc/gradient_guard.py','transformers/caption_targets.py','ddvc/temporal_pooling.py',
            'ddvc/matcher.py','misc/caption_matching.py','reranking/core.py','tools/caption_matching_smoke.py','tools/c1_pipeline.py','tools/c1_frozen_options.json')]
+    files += [ROOT/p for p in ('misc/prawn_ablation.py','reranking/online.py','tools/prawn_ablation_eval.py','tools/prawn_joint_smoke.py')]
     return {str(p):sha(p) for p in files}
 
 
@@ -250,11 +265,16 @@ def logged(command, log, pid=None):
 def smoke(args):
     path=config_path(args.work,args.dataset);cfg=check(path)
     logged([sys.executable,'-u','tools/prepare_gpt2_tokenizer.py'],args.work/'logs'/(cfg['id']+'.tokenizer.log'))
-    command=[sys.executable,'-u','tools/caption_matching_smoke.py','--config',str(path.parent/'smoke/config.yml')]
+    script='tools/prawn_joint_smoke.py' if cfg.get('online_quality') else 'tools/caption_matching_smoke.py'
+    command=[sys.executable,'-u',script,'--config',str(path.parent/'smoke/config.yml')]
     if getattr(args,'checkpoint',False):
-        command=[sys.executable,'-u','tools/caption_matching_smoke.py','--config',str(path),
+        command=[sys.executable,'-u',script,'--config',str(path),
                  '--checkpoint',str(args.work/'runs'/cfg['id']/'model-last.pth')]
     logged(command,args.work/'logs'/(cfg['id']+'.smoke.log'))
+    if cfg.get('online_quality'):
+        text=(args.work/'logs'/(cfg['id']+'.smoke.log')).read_text(encoding='utf8')
+        if 'ONLINE_QUALITY_GRADIENT_PASS joint' not in text:
+            raise RuntimeError('Actual GPU smoke did not verify Joint quality gradients')
     dump(args.work/'provenance'/(cfg['id']+'_smoke.json'),fingerprint(path))
 
 

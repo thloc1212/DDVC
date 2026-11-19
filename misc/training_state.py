@@ -103,7 +103,11 @@ def validate_resume(config, previous):
             'learning_rate_decay_start', 'learning_rate_decay_every', 'learning_rate_decay_rate',
             'cl_schedule_time', 'cl_schedule_val', 'cls_loss_coef', 'giou_loss_coef',
             'bbox_loss_coef', 'count_loss_coef', 'caption_loss_coef', 'loss_caption_cl',
-            'contrastive_loss_coef', 'caption_cost_chunk_size')
+            'contrastive_loss_coef', 'caption_cost_chunk_size',
+            'prawn_ablation_variant','caption_match_enabled','caption_match_weight',
+            'caption_match_warmup_epochs','caption_match_ramp_epochs','caption_match_decode_chunk',
+            'caption_match_idf_sha256','online_quality','quality_gradient_mode',
+            'quality_loss_coef','quality_head_lr','quality_generation_chunk','quality_annotation_file')
     changed = [k for k in keys if k in previous and config.get(k) != previous[k]]
     if changed:
         raise ValueError('Resume recipe differs for: ' + ', '.join(changed) + '. Start a new run instead.')

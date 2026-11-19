@@ -9,7 +9,10 @@ METHOD = dict(learned_proposal_mask=True, proposal_mask_loss_coef=0.0,
 
 
 def validate_method(config):
-    for key, expected in METHOD.items():
+    expected_method = dict(METHOD)
+    if config.get('prawn_ablation_variant') == 'no_content':
+        expected_method['proposal_mask_content_conditioned'] = False
+    for key, expected in expected_method.items():
         if config.get(key) != expected:
             raise ValueError(f'C1 requires {key}={expected!r}, got {config.get(key)!r}')
     for key in (*RETIRED_ENABLED, 'query_temporal_support', 'relation_aware_event_set'):
@@ -26,6 +29,9 @@ def validate_method(config):
 
 def validate_training_method(config):
     if config.get('experiment_recipe') in ('stable_c1', 'prawn_content_mask'):
+        if config.get('prawn_ablation_variant'):
+            from misc.prawn_ablation import validate
+            validate(config)
         return validate_method(config)
     from misc.c2_recipe import validate_method as validate_c2
     return validate_c2(config)

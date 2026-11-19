@@ -307,10 +307,13 @@ class Workflow:
                 for k in METRICS:
                     if abs(scores[k]-100*final[k])>1e-4:raise ValueError('Stored C1 metric not reproduced: '+k)
             row=dict(method=mode,beta=beta if mode=='reranker_softnms' else 0.,events=sum(map(len,predictions.values())),**{k:scores[k] for k in METRICS})
+            p,r=scores['Precision'],scores['Recall']
+            row['F1']=2*p*r/(p+r) if p+r else 0.
+            row.update({k:scores[k] for k in ('Bleu_1','Bleu_2','Bleu_3','ROUGE_L') if k in scores})
             summary.append(row);write_table(folder/'summary.tsv',summary);print('RESULT',json.dumps(row),flush=True)
         if sha(self.folder/'head-best.pt')!=head_sha or sha(self.checkpoint)!=self.manifest['base_checkpoint_sha256']:
             raise RuntimeError('Head/base checkpoint changed during evaluation')
-        if self.cfg.get('proposal_mask_content_conditioned'):
+        if self.cfg.get('proposal_mask_content_conditioned') or self.cfg.get('prawn_ablation_variant')=='no_content':
             from .temporal_audit import write_audit
             write_audit({v['video_id']:v['rows'] for v in val}, outputs,
                         self.cfg['gt_file_for_eval'], folder)

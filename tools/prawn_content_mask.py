@@ -10,6 +10,7 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'tools'))
+from misc.prawn_ablation import run_name as profile_run_name, variant as profile_variant
 WORK = ROOT.parent
 QUALITY = WORK / 'frozen_quality'
 
@@ -61,7 +62,7 @@ def worker(args):
     import fcntl
     with (WORK / 'logs' / (args.dataset + '.prawn.lock')).open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        print('PRAWN_CAPTION_MATCH_RECIPE', args.dataset, 'content_conditioned_mask=True generator_seed=777 quality_seed=777 head_split_seed=777',
+        print('PRAWN_CAPTION_MATCH_RECIPE', args.dataset, 'profile='+profile_variant(), 'content_conditioned_mask='+str(profile_variant()!='no_content'), 'caption_matching=True generator_seed=777 quality_seed=777 head_split_seed=777',
               'generator_epochs=' + ('15' if args.dataset == 'yc2' else '6'),
               'quality_epochs=20 quality_batch_videos=8 generator_batch=1 accumulation=1 beta=' + ('1' if args.dataset == 'yc2' else '6'), flush=True)
         state = read_state(state_path(args.dataset))
@@ -69,10 +70,15 @@ def worker(args):
             flags = []
             if args.resume and state:
                 epochs = 15 if args.dataset == 'yc2' else 6
-                checkpoint = WORK / 'runs' / f'{args.dataset}_caption_match_e{epochs}_b1' / 'model-last.pth'
+                checkpoint = WORK / 'runs' / profile_run_name(args.dataset) / 'model-last.pth'
                 flags = ['--resume' if checkpoint.is_file() else '--retry']
             command('c1_drive.sh', 'start', args.dataset, *flags)
             wait_stage(args.dataset)
+        if profile_variant() == 'joint':
+            from prawn_ablation_eval import finalize_joint
+            finalize_joint(WORK, args.dataset)
+            print('PRAWN_JOINT_COMPLETE_BACKED_UP',args.dataset,flush=True)
+            return
         state = read_state(state_path(args.dataset, quality=True))
         if state.get('status') != 'COMPLETE_BACKED_UP':
             flags = ['--resume'] if args.resume and state else []
@@ -115,7 +121,7 @@ def main():
         worker(args)
     elif args.command == 'logs':
         epochs = 15 if args.dataset == 'yc2' else 6
-        run = f'{args.dataset}_caption_match_e{epochs}_b1'
+        run = profile_run_name(args.dataset)
         logs = [WORK/'logs'/(args.dataset+'.prawn.chain.log'),
                 WORK/'logs'/(args.dataset+'.drive.log'),
                 WORK/'logs'/(run+'.launch.log'), WORK/'logs'/(run+'.log'),

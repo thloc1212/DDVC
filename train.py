@@ -145,11 +145,12 @@ def train(opt):
 
     model.to(opt.device)
 
+    from reranking.online import optimizer_groups
     if opt.optimizer_type == 'adam':
-        optimizer = optim.Adam(model.parameters(), lr=opt.lr, weight_decay=opt.weight_decay)
+        optimizer = optim.Adam(optimizer_groups(model,opt), lr=opt.lr, weight_decay=opt.weight_decay)
 
     elif opt.optimizer_type == 'adamw':
-        optimizer = optim.AdamW(model.parameters(), lr=opt.lr, weight_decay=opt.weight_decay)
+        optimizer = optim.AdamW(optimizer_groups(model,opt), lr=opt.lr, weight_decay=opt.weight_decay)
 
     milestone = [opt.learning_rate_decay_start + opt.learning_rate_decay_every * _ for _ in range(int((opt.epoch - opt.learning_rate_decay_start) / opt.learning_rate_decay_every))]
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestone, gamma=opt.learning_rate_decay_rate)

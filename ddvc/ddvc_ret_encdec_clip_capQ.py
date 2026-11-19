@@ -235,6 +235,8 @@ class CM2(nn.Module):
 
         self.translator = translator
 
+        from reranking.online import initialize
+        initialize(self, opt)
         self.disable_mid_caption_heads = opt.disable_mid_caption_heads
         if self.disable_mid_caption_heads:
             print('only calculate caption loss in the last decoding layer')
@@ -700,6 +702,10 @@ class CM2(nn.Module):
                 loss.update(self.caption_head[-1].proposal_mask.objective(
                     out['pred_boxes'][0], dt['video_mask'], proposal_confidence(context), proposal_anchors(context),
                     event_queries=hs_cap[-1, 0], visual_features=dt['video_tensor']))
+            if getattr(self.opt, 'online_quality', False):
+                from reranking.online import augment
+                ref = init_reference if hs.shape[0] == 1 else inter_references[hs.shape[0]-2]
+                loss.update(augment(self, dt, out, hs_cap[-1], ref, others, eval_mode))
             return out, loss
         else:
             return memory
@@ -1575,6 +1581,8 @@ def build(args):
         weight_dict['loss_proposal_mask'] = args.proposal_mask_loss_coef
     losses = ['labels', 'boxes', 'cardinality']
 
+    if getattr(args, 'online_quality', False):
+        weight_dict['loss_quality'] = args.quality_loss_coef
     criterion = SetCriterion_cl(args.num_classes, matcher, weight_dict, losses, focal_alpha=args.focal_alpha,
                              focal_gamma=args.focal_gamma, opt=args)
     contrastive_criterion = ContrastiveCriterion(temperature=args.contrastive_loss_temperature,

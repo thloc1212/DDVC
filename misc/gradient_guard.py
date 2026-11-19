@@ -10,6 +10,13 @@ def clip_gradients_or_fail(model, max_norm, save_folder, *, epoch, batch_index,
     if not parameters:
         raise RuntimeError('No model gradients before optimizer update')
     try:
+        if getattr(getattr(model,'opt',None),'online_quality',False):
+            # Keep auxiliary head norms from rescaling DDVC gradients in the
+            # detached control. Each group retains the original clipping bound.
+            quality_ids={id(p) for p in model.quality_head.parameters()}
+            groups=[[p for p in parameters if (id(p) in quality_ids)==is_quality] for is_quality in (False,True)]
+            norms=[torch.nn.utils.clip_grad_norm_(group,max_norm,error_if_nonfinite=True) for group in groups if group]
+            return torch.stack(norms).max()
         # Same clipping operation as the original recipe on finite gradients.
         # The error check runs before multiplying gradients by a clipping factor.
         return torch.nn.utils.clip_grad_norm_(parameters, max_norm,

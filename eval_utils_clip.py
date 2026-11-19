@@ -226,6 +226,9 @@ def evaluate(model,memory_bank,criterion,contrastive_criterion, postprocessors, 
                         'pred_event_count': results[idx]['pred_seq_len'].item(),
                     }
                     for pid in range(segment_num) if results[idx]['scores'][pid].item() > score_threshold and raw_boxes_mask[pid]]
+                if getattr(opt, 'online_quality', False):
+                    for row in batch_json[video_name]:
+                        row['reranker_quality'] = float(output['pred_quality'][idx, row['query_id']])
                 if results_g:
                     collect_grounding_result(idx, video_name, opt, dt, batch_json_g, results_g)
                 if aux_results_g:
@@ -299,6 +302,9 @@ def evaluate(model,memory_bank,criterion,contrastive_criterion, postprocessors, 
     except Exception as exc:
         if logger is not None:
             logger.warning('Could not plot proposal distribution: {}'.format(exc))
+    if getattr(opt, 'online_quality', False) and not skip_lang_eval:
+        from tools.prawn_ablation_eval import score_joint_epoch
+        score_joint_epoch(raw_dvc_json_path, opt)
     return scores, loss_sum
 
 def collect_tal_result(out, name_map):

@@ -8,7 +8,12 @@ PY=${DDVC_PYTHON:-/tmp/uv-venv/bin/python}
 COMMAND=${1:-help}
 DATASET=${2:-yc2}
 case "$DATASET" in yc2) EPOCHS=15;; anet) EPOCHS=6;; *) echo 'Dataset must be yc2 or anet'; exit 2;; esac
-RUN=${DATASET}_caption_match_e${EPOCHS}_b1
+PROFILE=${PRAWN_ABLATION_VARIANT:-full}
+case "$PROFILE" in
+ full) RUN=${DATASET}_caption_match_e${EPOCHS}_b1;;
+ no_content|joint) RUN=${DATASET}_loo_${PROFILE}_e${EPOCHS}_b1;;
+ *) echo 'Invalid ablation profile'; exit 2;;
+esac
 export CUDA_VISIBLE_DEVICES=${DDVC_GPU:-0} TOKENIZERS_PARALLELISM=false PYTHONUNBUFFERED=1 MPLBACKEND=Agg LC_ALL=C LANG=C
 export PYTHONPATH="$REPO/tools:$REPO:$REPO/ddvc/ops${PYTHONPATH:+:$PYTHONPATH}"
 export HF_HOME=${DDVC_HF_HOME:-$WORK/hf-cache}
@@ -19,6 +24,7 @@ if [[ -f "$WORK/cuda130_env.sh" ]]; then source "$WORK/cuda130_env.sh"; fi
 logged() { local name=$1; shift; echo "LOG: $WORK/logs/$name.log"; "$@" 2>&1 | tee -a "$WORK/logs/$name.log"; }
 case "$COMMAND" in
  setup)
+   export PRAWN_ABLATION_VARIANT=full
    "$PY" -c 'import torch,torchvision; assert torch.cuda.is_available(); print(torch.__version__,torch.version.cuda)'
    "$PY" -c 'import json,torch,torchvision; from pathlib import Path; Path("../provenance/native_torch_before.json").write_text(json.dumps([torch.__version__,torchvision.__version__]))'
    logged packages uv pip install --python "$PY" -r tools/molab-requirements.txt
@@ -29,6 +35,8 @@ case "$COMMAND" in
    logged cpu_c1 "$PY" smoke_test_c1.py
    logged content_mask_tests "$PY" tools/test_content_proposal_mask.py
    logged caption_matching_tests "$PY" tools/test_caption_matching.py
+   logged ablation_tests "$PY" tools/test_prawn_ablation.py
+   logged joint_quality_tests "$PY" tools/test_online_quality.py
    logged quality_tests "$PY" tools/test_c1_rerank.py
    logged drive_tests "$PY" tools/test_c1_rclone.py
    logged cli_imports "$PY" tools/test_c1_cli_imports.py
