@@ -229,8 +229,8 @@ def main():
             v='no_content' if args.part=='no-content' else args.part
             base=WORK/('train_'+v)
             name=f'{args.dataset}_loo_{v}_e{15 if args.dataset=="yc2" else 6}_b1'
-            paths += [base/'logs'/(args.dataset+'.drive.log'),base/'logs'/(name+'.launch.log'),
-                      base/'logs'/(name+'.log'),base/'frozen_quality/logs'/(args.dataset+'.rerank.log')]
+            paths += [base/'logs'/(args.dataset+'.drive.log'),base/'logs'/(name+'.launch.log'),base/'logs'/(name+'.log')]
+            if args.part=='no-content':paths += [base/'frozen_quality/logs'/(args.dataset+'.rerank.log')]
         os.execvp('tail',['tail','-n','25','-F',*map(str,paths)])
 
 

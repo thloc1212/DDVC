@@ -62,9 +62,11 @@ def worker(args):
     import fcntl
     with (WORK / 'logs' / (args.dataset + '.prawn.lock')).open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        head_recipe = ('joint_quality=True head_only_epochs=0 quality_batch_videos=1' if profile_variant()=='joint'
+                       else 'joint_quality=False head_only_epochs=20 quality_batch_videos=8')
         print('PRAWN_CAPTION_MATCH_RECIPE', args.dataset, 'profile='+profile_variant(), 'content_conditioned_mask='+str(profile_variant()!='no_content'), 'caption_matching=True generator_seed=777 quality_seed=777 head_split_seed=777',
               'generator_epochs=' + ('15' if args.dataset == 'yc2' else '6'),
-              'quality_epochs=20 quality_batch_videos=8 generator_batch=1 accumulation=1 beta=' + ('1' if args.dataset == 'yc2' else '6'), flush=True)
+              head_recipe, 'generator_batch=1 accumulation=1 beta=' + ('1' if args.dataset == 'yc2' else '6'), flush=True)
         state = read_state(state_path(args.dataset))
         if state.get('status') != 'COMPLETE_BACKED_UP':
             flags = []

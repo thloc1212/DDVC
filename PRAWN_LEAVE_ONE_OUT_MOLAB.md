@@ -1,8 +1,8 @@
 # PRAWN: leave-one-out ablations, seed 777
 
-Release: `prawn-loo-20261119-v1`. Existing training releases and checkpoints are preserved.
+Release: `prawn-loo-20261119-v2`. Existing training releases and checkpoints are preserved.
 
-All experiments retain **caption-aware Hungarian matching** (tIoU × TRAIN-IDF weighted caption unigram F1). Schedule remains unchanged: 2 warmup epochs, 2 ramp epochs, maximum matching weight 0.5. It operates in generator training, not frozen-head fitting/inference. Auxiliary mask loss is **0 in every run**. No concepts, QTS, event-set head, merge or deduplication loss are introduced.
+All experiments retain **caption-aware Hungarian matching** (tIoU Ã— TRAIN-IDF weighted caption unigram F1). Schedule remains unchanged: 2 warmup epochs, 2 ramp epochs, maximum matching weight 0.5. It operates in generator training, not frozen-head fitting/inference. Auxiliary mask loss is **0 in every run**. No concepts, QTS, event-set head, merge or deduplication loss are introduced.
 
 | Part | Matching | Content conditioning | Quality | Optimization |
 |---|---|---|---|---|
@@ -29,11 +29,11 @@ export LC_ALL=C LANG=C
 test -f /marimo/KLTN_DRIVE_PRIVATE.env
 if [ ! -e /marimo/PRAWN_Ablations/source ]; then
   git -c advice.detachedHead=false clone --single-branch \
-    --branch prawn-loo-20261119-v1 \
+    --branch prawn-loo-20261119-v2 \
     https://github.com/thloc1212/DDVC.git /marimo/PRAWN_Ablations/source
 fi
 test "$(git -C /marimo/PRAWN_Ablations/source rev-parse HEAD)" = \
-     "$(git -C /marimo/PRAWN_Ablations/source rev-parse 'prawn-loo-20261119-v1^{commit}')"
+     "$(git -C /marimo/PRAWN_Ablations/source rev-parse 'prawn-loo-20261119-v2^{commit}')"
 bash /marimo/PRAWN_Ablations/source/tools/prawn_ablation.sh auth
 BASH
 ```
@@ -54,7 +54,7 @@ The remaining blocks are identical on both accounts and read that dataset file. 
 
 ## 1. Effect of content conditioning
 
-Fresh no-content generator → verified backup → new frozen quality head. Retains geometric learned mask, confidence gate, matching and Soft-NMS.
+Fresh no-content generator â†’ verified backup â†’ new frozen quality head. Retains geometric learned mask, confidence gate, matching and Soft-NMS.
 
 ```bash
 DS=$(cat /marimo/PRAWN_Ablations/dataset.txt)
@@ -109,7 +109,7 @@ bash /marimo/PRAWN_Ablations/source/tools/prawn_ablation.sh status "$DS"
 
 After session loss, repeat section0 (including the appropriate dataset line), then repeat the exact part command. Trainable parts find their own exact-source recovery namespaces and restore generator/model/optimizer/RNG state plus partial frozen-head work. They never continue from another ablation's weights. Completed generators are restored without changing their config bytes; runtime/data are prepared before frozen-head continuation. Beta output caches are reused only when prediction/reference signatures match. A failure is logged as `FAILED`; do not assume an exit is a completed experiment.
 
-Training needs staged CLIP features/banks from the verified shared data cache; these are necessary for a fresh generator and frozen-head extraction. They are separate from result-only restores in parts2–3.
+Training needs staged CLIP features/banks from the verified shared data cache; these are necessary for a fresh generator and frozen-head extraction. They are separate from result-only restores in parts2â€“3.
 
 Local summaries:
 
