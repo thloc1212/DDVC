@@ -64,7 +64,10 @@ def worker(args):
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         head_recipe = ('joint_quality=True head_only_epochs=0 quality_batch_videos=1' if profile_variant()=='joint'
                        else 'joint_quality=False head_only_epochs=20 quality_batch_videos=8')
-        print('PRAWN_CAPTION_MATCH_RECIPE', args.dataset, 'profile='+profile_variant(), 'content_conditioned_mask='+str(profile_variant()!='no_content'), 'caption_matching=True generator_seed=777 quality_seed=777 head_split_seed=777',
+        print('PRAWN_CAPTION_MATCH_RECIPE', args.dataset, 'profile='+profile_variant(),
+              'proposal_reweighting='+str(profile_variant()!='no_pr'),
+              'content_conditioned_mask='+str(profile_variant() not in ('no_content','no_pr')),
+              'caption_matching=True generator_seed=777 quality_seed=777 head_split_seed=777',
               'generator_epochs=' + ('15' if args.dataset == 'yc2' else '6'),
               head_recipe, 'generator_batch=1 accumulation=1 beta=' + ('1' if args.dataset == 'yc2' else '6'), flush=True)
         state = read_state(state_path(args.dataset))

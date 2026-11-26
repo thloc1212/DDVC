@@ -17,9 +17,10 @@ from prawn_results_viewer import Store
 
 def main():
     dataset=sys.argv[1];work=ROOT.parent
-    if variant() not in ('no_content','joint'):raise ValueError('This entry point does not retrain Full')
+    if variant() not in ('no_content','no_pr','joint'):raise ValueError('This entry point does not retrain Full')
     config=Path('/marimo/secrets/rclone.conf')
-    transport.restore_auth(Path('/marimo/KLTN_DRIVE_PRIVATE.env'),config,'kltnbackup')
+    if not config.is_file():
+        transport.restore_auth(Path('/marimo/KLTN_DRIVE_PRIVATE.env'),config,'kltnbackup')
     drive=transport.Drive(config,'kltnbackup','KLTNRUNS');store=Store(drive,work/'restore_index')
     state_path=transport.session_path(dataset)
     work.mkdir(parents=True,exist_ok=True)
@@ -50,7 +51,7 @@ def main():
             target=work/'prepared'/pipeline.run_name(dataset)/'data'/dataset/'features/clipvitl14.pth'
             if not target.is_file():pipeline.stage_file(transport.base_feature(dataset),target)
             pipeline.check(pipeline.config_path(work,dataset))
-            if variant()=='no_content' and not chain.state_path(dataset,quality=True).is_file():
+            if variant() in ('no_content','no_pr') and not chain.state_path(dataset,quality=True).is_file():
                 head_candidates=store.snapshots(namespace('quality'),dataset)
                 for qs in head_candidates:
                     ready=qs['ready'];name=f'provenance/rerank_{dataset}.json'

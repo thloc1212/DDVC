@@ -1,7 +1,7 @@
 """One-factor ablation profiles. Caption-aware matching is never disabled."""
 import os
 
-VARIANTS = ('full', 'no_content', 'joint')
+VARIANTS = ('full', 'no_content', 'no_pr', 'joint')
 
 
 def variant():
@@ -26,7 +26,8 @@ def configure(cfg):
     v = variant()
     if v == 'full':
         return cfg  # Preserve historical Full configuration/signatures exactly.
-    cfg.update(prawn_ablation_variant=v, proposal_mask_content_conditioned=v != 'no_content',
+    cfg.update(prawn_ablation_variant=v, learned_proposal_mask=v != 'no_pr',
+               proposal_mask_content_conditioned=v not in ('no_content', 'no_pr'),
                online_quality=v == 'joint')
     if v == 'joint':
         cfg.update(quality_gradient_mode='joint', quality_loss_coef=.1, quality_head_lr=.001,
@@ -38,7 +39,9 @@ def validate(cfg):
     v = cfg.get('prawn_ablation_variant', 'full')
     if v not in VARIANTS:
         raise ValueError('Unknown saved ablation profile')
-    if cfg.get('proposal_mask_content_conditioned') is not (v != 'no_content'):
+    if cfg.get('learned_proposal_mask') is not (v != 'no_pr'):
+        raise ValueError('Proposal reweighting differs from ablation profile')
+    if cfg.get('proposal_mask_content_conditioned') is not (v not in ('no_content', 'no_pr')):
         raise ValueError('Content flag differs from ablation profile')
     if cfg.get('proposal_mask_loss_coef') != 0.:
         raise ValueError('Auxiliary mask loss must stay OFF')

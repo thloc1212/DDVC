@@ -11,7 +11,7 @@ case "$DATASET" in yc2) EPOCHS=15;; anet) EPOCHS=6;; *) echo 'Dataset must be yc
 PROFILE=${PRAWN_ABLATION_VARIANT:-full}
 case "$PROFILE" in
  full) RUN=${DATASET}_caption_match_e${EPOCHS}_b1;;
- no_content|joint) RUN=${DATASET}_loo_${PROFILE}_e${EPOCHS}_b1;;
+ no_content|no_pr|joint) RUN=${DATASET}_loo_${PROFILE}_e${EPOCHS}_b1;;
  *) echo 'Invalid ablation profile'; exit 2;;
 esac
 export CUDA_VISIBLE_DEVICES=${DDVC_GPU:-0} TOKENIZERS_PARALLELISM=false PYTHONUNBUFFERED=1 MPLBACKEND=Agg LC_ALL=C LANG=C

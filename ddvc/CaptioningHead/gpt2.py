@@ -26,8 +26,9 @@ class GPT2CaptionModel(nn.Module):
     def __init__(self, opt):
         super(GPT2CaptionModel, self).__init__()
         self.opt = opt
-        if not opt.add_cross_attention or not getattr(opt, 'learned_proposal_mask', True):
-            raise ValueError('C2 requires learned proposal masking and visual cross attention')
+        use_pr = getattr(opt, 'learned_proposal_mask', True)
+        if not opt.add_cross_attention or (not use_pr and getattr(opt, 'prawn_ablation_variant', None) != 'no_pr'):
+            raise ValueError('PRAWN requires visual cross attention and enables the proposal mask outside w/o PR')
         # prefix mlp
         self.fc1 = nn.Linear(self.opt.hidden_dim, self.opt.hidden_dim*2)
         self.fc2 = nn.Linear(self.opt.hidden_dim*2, 768)
@@ -37,12 +38,14 @@ class GPT2CaptionModel(nn.Module):
         configuration = GPT2Config(n_layer=self.opt.gpt_layer,add_cross_attention=self.opt.add_cross_attention)
 
         self.model = GPT2LMHeadModel(configuration)
-        with torch.random.fork_rng(devices=[]):
-            torch.default_generator.manual_seed(1731)
-            self.proposal_mask = LearnedGatedProposalMask(
-                opt.proposal_mask_bins, opt.proposal_mask_encoding_dim,
-                content_conditioned=getattr(opt, 'proposal_mask_content_conditioned', False),
-                query_dim=opt.hidden_dim, content_dim=getattr(opt, 'proposal_mask_content_dim', 128))
+        self.proposal_mask = None
+        if use_pr:
+            with torch.random.fork_rng(devices=[]):
+                torch.default_generator.manual_seed(1731)
+                self.proposal_mask = LearnedGatedProposalMask(
+                    opt.proposal_mask_bins, opt.proposal_mask_encoding_dim,
+                    content_conditioned=getattr(opt, 'proposal_mask_content_conditioned', False),
+                    query_dim=opt.hidden_dim, content_dim=getattr(opt, 'proposal_mask_content_dim', 128))
 
         self.prefix_token=self.tokenizer("<|endoftext|>",return_tensors="pt")["input_ids"].to(opt.device)
 
@@ -60,13 +63,15 @@ class GPT2CaptionModel(nn.Module):
         cross_emb = clip_frame_feature.repeat(hs.shape[0], 1, 1).detach()
         if video_mask is None:
             video_mask = torch.ones(1, cross_emb.shape[1], device=cross_emb.device, dtype=torch.bool)
+        mask = video_mask.to(device=cross_emb.device, dtype=torch.bool).expand(hs.shape[0], -1)
+        if self.proposal_mask is None:
+            return cross_emb, mask
         if event_boxes is None or len(event_boxes) != hs.shape[0]:
             raise ValueError('Learned masks need one interval per caption query')
         details = self.proposal_mask(event_boxes, video_mask, event_scores, anchor_boxes,
                                      event_queries=hs[:, 0], visual_features=clip_frame_feature)
         # Detach frozen CLIP features BEFORE gating, preserving all mask gradients.
         cross_emb = (cross_emb * details['weights'].unsqueeze(-1)).contiguous()
-        mask = video_mask.to(device=cross_emb.device, dtype=torch.bool).expand(hs.shape[0], -1)
         return cross_emb, mask
 
     def forward(self, hs, cap_label, cap_mask ,others, cap_tensor, clip_fram_feature,get_loss=True,

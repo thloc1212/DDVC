@@ -10,8 +10,11 @@ METHOD = dict(learned_proposal_mask=True, proposal_mask_loss_coef=0.0,
 
 def validate_method(config):
     expected_method = dict(METHOD)
-    if config.get('prawn_ablation_variant') == 'no_content':
+    variant = config.get('prawn_ablation_variant')
+    if variant in ('no_content', 'no_pr'):
         expected_method['proposal_mask_content_conditioned'] = False
+    if variant == 'no_pr':
+        expected_method['learned_proposal_mask'] = False
     for key, expected in expected_method.items():
         if config.get(key) != expected:
             raise ValueError(f'C1 requires {key}={expected!r}, got {config.get(key)!r}')

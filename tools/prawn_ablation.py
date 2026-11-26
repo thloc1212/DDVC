@@ -1,4 +1,4 @@
-"""Separate Full-control, no-content, frozen-beta and Joint experiments for two accounts."""
+"""Run PRAWN controls, component removal, beta and training-regime experiments."""
 import argparse
 import csv
 import hashlib
@@ -14,7 +14,8 @@ import zipfile
 ROOT=Path(__file__).resolve().parents[1]
 sys.path[:0]=[str(ROOT),str(ROOT/'tools')]
 WORK=ROOT.parent
-PARTS=('no-content','quality','beta','joint')
+TRAIN_PROFILES={'no-content':'no_content','no-pr':'no_pr','joint':'joint'}
+PARTS=('no-content','no-pr','quality','beta','joint')
 
 
 def revision():return subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
@@ -45,14 +46,15 @@ def auth():
     ensure_rclone(WORK)
     import c1_rclone
     config=Path('/marimo/secrets/rclone.conf')
-    c1_rclone.restore_auth(Path('/marimo/KLTN_DRIVE_PRIVATE.env'),config,'kltnbackup')
+    if not config.is_file():
+        c1_rclone.restore_auth(Path('/marimo/KLTN_DRIVE_PRIVATE.env'),config,'kltnbackup')
     drive=c1_rclone.Drive(config,'kltnbackup','KLTNRUNS')
     drive.call('lsf',drive.path(), '--max-depth','1',quiet=True)
     return drive
 
 
 def child_source(part):
-    name='no_content' if part=='no-content' else part
+    name=TRAIN_PROFILES[part]
     work=WORK/('train_'+name);source=work/'source'
     if source.exists():
         actual=subprocess.check_output(['git','rev-parse','HEAD'],cwd=source,text=True).strip()
@@ -104,9 +106,9 @@ def worker(args):
         atomic_json(state_path,state)
         try:
             packages()  # Install the locked legacy dependencies before importing scipy/yaml/model helpers.
-            if args.part in ('no-content','joint'):
+            if args.part in TRAIN_PROFILES:
                 source=child_source(args.part)
-                env=dict(os.environ,PRAWN_ABLATION_VARIANT='no_content' if args.part=='no-content' else 'joint')
+                env=dict(os.environ,PRAWN_ABLATION_VARIANT=TRAIN_PROFILES[args.part])
                 env.update(DDVC_C1_WORK=str(source.parent),DDVC_HF_HOME=str(source.parent/'hf-cache'))
                 env['PYTHONPATH']=os.pathsep.join(map(str,[source/'tools',source,source/'ddvc/ops']))+os.pathsep+os.environ.get('PYTHONPATH','')
                 # Child stays attached; the verified generator/head workers own their snapshots.
@@ -165,16 +167,19 @@ def export(args):
     combined=[]
     inputs=[(WORK/'results'/args.dataset/'quality/summary.tsv',None),
             (WORK/'results'/args.dataset/'beta/summary.tsv','beta'),
-            (WORK/'train_no_content/frozen_quality/runs'/args.dataset/'evaluation/summary.tsv','no-content')]
+            (WORK/'train_no_content/frozen_quality/runs'/args.dataset/'evaluation/summary.tsv','no-content'),
+            (WORK/'train_no_pr/frozen_quality/runs'/args.dataset/'evaluation/summary.tsv','no-pr')]
     epochs=15 if args.dataset=='yc2' else 6
     inputs.append((WORK/'train_joint/runs'/f'{args.dataset}_loo_joint_e{epochs}_b1'/'joint_evaluation/summary.tsv','joint'))
     for path,part in inputs:
         if not path.is_file():continue
         for row in csv.DictReader(path.open(encoding='utf-8-sig'),delimiter='\t'):
-            if part=='no-content' and row['method']!='reranker_softnms':continue
-            if part=='no-content':row['method']='w_o_content'
+            if part in ('no-content','no-pr'):
+                if row['method']!='reranker_softnms':continue
+                row['method']='w_o_content' if part=='no-content' else 'w_o_pr'
             if part=='joint':row['method']='Joint'
-            row.update(dataset=args.dataset,caption_matching=True,content_conditioned=part!='no-content',
+            row.update(dataset=args.dataset,caption_matching=True,proposal_reweighting=part!='no-pr',
+                       content_conditioned=part not in ('no-content','no-pr'),
                        quality_enabled=row['method']!='w_o_quality',mask_loss=0.,
                        regime='joint' if part=='joint' else 'two-stage')
             combined.append(row)
@@ -185,7 +190,7 @@ def export(args):
         print('COMBINED_SUMMARY',report,flush=True)
     roots=[WORK/'results'/args.dataset,WORK/'control'/args.dataset/'control_identity.json',
            WORK/'provenance',WORK/'logs']
-    for part in ('no_content','joint'):
+    for part in TRAIN_PROFILES.values():
         base=WORK/('train_'+part)
         roots += [base/'runs',base/'prepared',base/'logs',base/'provenance',base/'frozen_quality/runs'/args.dataset/'evaluation',
                   base/'frozen_quality/runs'/args.dataset/'manifest.json',base/'frozen_quality/logs']
@@ -200,7 +205,7 @@ def export(args):
         for name in subprocess.check_output(['git','ls-files'],cwd=ROOT,text=True).splitlines():
             if Path(name).suffix in {'.py','.sh','.md','.json'}:z.write(ROOT/name,'source/'+name)
         z.writestr('EXPERIMENTS.json',json.dumps(dict(dataset=args.dataset,source_commit=revision(),caption_matching=True,
-                 auxiliary_mask_loss=False,variants=['Full','w/o Content','w/o Quality','beta grid','Joint'],
+                 auxiliary_mask_loss=False,variants=['Full','w/o Content','w/o PR','w/o Quality','beta grid','Joint'],
                  training_checkpoint_weights_included=False)))
     drive=auth();remote=f'analysis/prawn_loo/{args.dataset}/exports/{target.name}'
     drive.call('copyto',str(target),drive.path(remote),quiet=True)
@@ -225,12 +230,12 @@ def main():
         print('WORKER_ALIVE',alive(WORK/'logs'/(args.dataset+'.active.pid')))
     else:
         paths=[WORK/'logs'/f'{args.dataset}.{args.part}.log']
-        if args.part in ('no-content','joint'):
-            v='no_content' if args.part=='no-content' else args.part
+        if args.part in TRAIN_PROFILES:
+            v=TRAIN_PROFILES[args.part]
             base=WORK/('train_'+v)
             name=f'{args.dataset}_loo_{v}_e{15 if args.dataset=="yc2" else 6}_b1'
             paths += [base/'logs'/(args.dataset+'.drive.log'),base/'logs'/(name+'.launch.log'),base/'logs'/(name+'.log')]
-            if args.part=='no-content':paths += [base/'frozen_quality/logs'/(args.dataset+'.rerank.log')]
+            if args.part!='joint':paths += [base/'frozen_quality/logs'/(args.dataset+'.rerank.log')]
         os.execvp('tail',['tail','-n','25','-F',*map(str,paths)])
 
 
