@@ -72,7 +72,13 @@ def run(args):
     if sha(config_path) != manifest['base_config_sha256']:
         raise ValueError('Baseline config differs from the config used to train this quality head')
 
-    reference_paths = config['gt_file_for_eval'] + config['gt_file_for_para_eval']
+    event_refs = config['gt_file_for_eval']
+    paragraph_refs = config['gt_file_for_para_eval']
+    if getattr(args, 'relocate_references', False):
+        original_work = Path(config['save_dir']).parent
+        event_refs = [str(work / Path(path).relative_to(original_work)) for path in event_refs]
+        paragraph_refs = [str(work / Path(path).relative_to(original_work)) for path in paragraph_refs]
+    reference_paths = event_refs + paragraph_refs
     references = [sha(path) for path in reference_paths]
     head_path = folder / 'head-best.pt'
     head_hash = sha(head_path)
@@ -145,7 +151,7 @@ def run(args):
             with (output / 'scorer_detail.log').open('a', encoding='utf8') as log:
                 with contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
                     scores = {key: float(value) * 100 for key, value in eval_metrics(
-                        str(path), config['gt_file_for_eval'], config['gt_file_for_para_eval'],
+                        str(path), event_refs, paragraph_refs,
                         dvc_eval_version='2018', infer_mode=True).items()}
             if not complete_scores(scores):
                 raise RuntimeError('Incomplete official scores; inspect ' + str(output / 'scorer_detail.log'))
@@ -155,6 +161,8 @@ def run(args):
             atomic_json(path.with_suffix('.metrics.json'), dict(
                 signature=metric_fingerprint(path, references), scoring_protocol=SCORING_PROTOCOL, scores=scores))
             row.update({key: scores[key] for key in METRICS})
+            precision, recall = scores['Precision'], scores['Recall']
+            row['F1'] = 2 * precision * recall / (precision + recall) if precision + recall else 0.
         summary.append(row)
         write_table(output / 'summary.tsv', summary)
         print('BETA_RESULT', json.dumps(row), flush=True)
@@ -168,6 +176,8 @@ def main():
     parser.add_argument('--work', type=Path, default=Path('/marimo/DDVC_Baseline_Quality'))
     parser.add_argument('--dataset', choices=('anet', 'yc2'), required=True)
     parser.add_argument('--config', type=Path)
+    parser.add_argument('--relocate-references', action='store_true',
+                        help='Resolve saved references under --work while preserving original config bytes')
     parser.add_argument('--betas', type=float, nargs='+', default=[0., .25, .5, 1., 2.])
     parser.add_argument('--selection-only', action='store_true', help='Prepare selections and reuse verified metrics only')
     args = parser.parse_args()
